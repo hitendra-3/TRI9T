@@ -62,6 +62,25 @@ async function loadPresetFile(filename, verLabel) {
     }
 }
 
+// Handle custom file upload and read content
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        document.getElementById("ingest-content").value = e.target.result;
+        
+        // Auto-detect version label from filename (e.g. "ct200_manual_v2.md" -> "v2")
+        const name = file.name.toLowerCase();
+        const match = name.match(/_(v\d+)/) || name.match(/-(v\d+)/) || name.match(/^(v\d+)/);
+        if (match) {
+            document.getElementById("ingest-ver-label").value = match[1];
+        }
+    };
+    reader.readAsText(file);
+}
+
 // Submit Ingestion to Backend
 async function submitIngestion() {
     const docName = document.getElementById("ingest-doc-name").value.strip ? document.getElementById("ingest-doc-name").value.strip() : document.getElementById("ingest-doc-name").value;
@@ -239,17 +258,16 @@ async function loadVersionDetails(verId) {
                 // Let's enrich nodesMap with all nodes
                 allNodes.forEach(n => nodesMap.set(n.id, n));
                 
-                // Calculate new and modified counts by comparing to earlier version if available
-                // If there's an earlier version, we query node details. But actually, we can get these stats
-                // directly or show estimated values. Let's count them by querying which nodes are new/modified.
-                // Since this information is checked at ingestion time, we can also compute it in JS by checking
-                // if there's a different hash for the same logical ID in V1.
-                // To keep it simple, we can query all versions and check! But wait, we can just show stats:
-                // Let's count modified sections. We can check for each node if its hash is changed.
-                // We'll calculate it by querying the diff endpoint or checking if it changed.
-                // Let's run a check:
-                let newCount = 0;
-                let modCount = 0;
+                // Fetch stats dynamically from backend
+                const statsResponse = await fetch(`/api/versions/${currentVerId}/stats`);
+                if (statsResponse.ok) {
+                    const stats = await statsResponse.json();
+                    document.getElementById("stat-new-sections").textContent = stats.new_nodes;
+                    document.getElementById("stat-modified-sections").textContent = stats.modified_nodes;
+                } else {
+                    document.getElementById("stat-new-sections").textContent = "0";
+                    document.getElementById("stat-modified-sections").textContent = "0";
+                }
                 
                 // We can query other versions. For simplicity, let's make a call to count selections
                 loadSelectionsList();
