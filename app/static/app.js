@@ -24,6 +24,18 @@ function toggleTheme() {
     localStorage.setItem("theme", newTheme);
 }
 
+// Tab Switcher for Test Cases panel
+function switchTab(tabId) {
+    // Update button states
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("onclick") === `switchTab('${tabId}')`);
+    });
+    // Update content visibility
+    document.querySelectorAll(".tab-content").forEach(el => {
+        el.classList.toggle("active", el.id === tabId);
+    });
+}
+
 // Ingestion Modal Controls
 function openIngestModal() {
     document.getElementById("ingest-modal").style.display = "flex";
@@ -199,81 +211,80 @@ async function loadDocumentVersions(docId, selectVerId = null) {
 async function loadVersionDetails(verId) {
     if (!verId) return;
     currentVerId = parseInt(verId);
-    
+
     try {
-        // 1. Fetch nodes for building tree
+        // 1. Build document tree (lazy-loaded top-level nodes)
         const nodesResponse = await fetch(`/api/nodes/browse?document_id=${currentDocId}&version_id=${currentVerId}`);
         if (!nodesResponse.ok) throw new Error("Failed to load nodes");
         const topNodes = await nodesResponse.json();
-        
-        // Fetch all nodes in the document version recursively to build a flat map
-        // We will build a helper mapping for search and selections.
-        // Actually, we can fetch all nodes of this version by getting child nodes as well.
-        // Since get_node_by_id returns children, we will write a recursive loader to fetch all nodes
-        // Or simply search for all nodes of this version. Wait, we can hit `/api/nodes/search?document_id=X&query=&version_id=Y` with empty query?
-        // Wait, search route requires min_length=1. We can fetch top nodes, and then as user expands tree we load child nodes!
-        // That is very clean and efficient (Lazy Loading).
-        // Let's implement tree rendering.
-        
+
         nodesMap.clear();
         const treeRoot = document.getElementById("tree-root");
         treeRoot.innerHTML = "";
-        
+
         if (topNodes.length === 0) {
-            treeRoot.innerHTML = '<div class="text-secondary" style="font-size: 13px; text-align: center; padding: 20px;">No sections in this version.</div>';
+            treeRoot.innerHTML = '<div style="font-size:12.5px; text-align:center; padding:24px; color:var(--text-secondary);">No sections found in this version.</div>';
             return;
         }
-        
+
         topNodes.forEach(node => {
             nodesMap.set(node.id, node);
-            const element = createTreeNodeElement(node);
-            treeRoot.appendChild(element);
+            treeRoot.appendChild(createTreeNodeElement(node));
         });
-        
-        // 2. Fetch statistics of this version
-        // Let's call /api/versions/{id} to get meta
+
+        // 2. Fetch version metadata for sidebar
         const verResponse = await fetch(`/api/versions/${currentVerId}`);
         if (verResponse.ok) {
             const verData = await verResponse.json();
             document.getElementById("side-ver-label").textContent = verData.version_label;
-            
-            // To get total nodes count and statistics:
-            // Since stats are calculated on ingestion and not stored in version database column directly,
-            // we can fetch count of nodes belonging to this version label.
-            // Let's run a query count.
-            // Actually, we can fetch all nodes using search with a wildcard if permitted, or fetch and count.
-            // Let's count them dynamically when browsing tree, or show a simple placeholder if not loaded.
-            // Wait, we can get statistics by calling search with query " " (space) or a common vowel,
-            // or we can count from the tree! Let's fetch all nodes to count them correctly.
-            // Since the CardioTrack manual is small (around 48 nodes), let's write a small helper route or search.
-            // Wait, search route uses simple SQL LIKE. If we search for "%", it returns all nodes!
-            // Let's test this: `GET /api/nodes/search?document_id=1&query=%25` (url encoded %).
-            // Let's do that to get all nodes!
-            const allNodesResponse = await fetch(`/api/nodes/search?document_id=${currentDocId}&query=%25&version_id=${currentVerId}`);
-            if (allNodesResponse.ok) {
-                const allNodes = await allNodesResponse.json();
-                document.getElementById("side-ver-nodes").textContent = allNodes.length;
-                document.getElementById("stat-total-sections").textContent = allNodes.length;
-                
-                // Let's enrich nodesMap with all nodes
-                allNodes.forEach(n => nodesMap.set(n.id, n));
-                
-                // Fetch stats dynamically from backend
-                const statsResponse = await fetch(`/api/versions/${currentVerId}/stats`);
-                if (statsResponse.ok) {
-                    const stats = await statsResponse.json();
-                    document.getElementById("stat-new-sections").textContent = stats.new_nodes;
-                    document.getElementById("stat-modified-sections").textContent = stats.modified_nodes;
-                } else {
-                    document.getElementById("stat-new-sections").textContent = "0";
-                    document.getElementById("stat-modified-sections").textContent = "0";
-                }
-                
-                // We can query other versions. For simplicity, let's make a call to count selections
-                loadSelectionsList();
-            }
+            document.getElementById("side-ver-date").textContent = new Date(verData.created_at).toLocaleDateString();
         }
-        
+
+        // 3. Fetch all nodes (wildcard search) for total count + enriched map
+        const allNodesResponse = await fetch(`/api/nodes/search?document_id=${currentDocId}&query=%25&version_id=${currentVerId}`);
+        if (allNodesResponse.ok) {
+            const allNodes = await allNodesResponse.json();
+            document.getElementById("side-ver-nodes").textContent = allNodes.length;
+            document.getElementById("stat-total-sections").textContent = allNodes.length;
+            allNodes.forEach(n => nodesMap.set(n.id, n));
+        }
+
+        // 4. Fetch dynamic version stats (new / modified / deleted nodes)
+        const statsResponse = await fetch(`/api/versions/${currentVerId}/stats`);
+        if (statsResponse.ok) {
+            const stats = await statsResponse.json();
+            document.getElementById("stat-new-sections").textContent = stats.new_nodes;
+            document.getElementById("stat-modified-sections").textContent = stats.modified_nodes;
+        } else {
+            document.getElementById("stat-new-sections").textContent = "0";
+            document.getElementById("stat-modified-sections").textContent = "0";
+        }
+
+        // 5. Load selections dropdown + total selections stat
+        await loadSelectionsList();
+
+        // 6. Load total generation count stat
+        await loadTotalGenerations();
+
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// Count total generated test case sets across all selections
+async function loadTotalGenerations() {
+    try {
+        const response = await fetch("/api/selections");
+        if (!response.ok) return;
+        const selections = await response.json();
+
+        let total = 0;
+        await Promise.all(selections.map(async sel => {
+            const r = await fetch(`/api/selections/${sel.id}/test-cases`);
+            if (r.ok) total++;
+        }));
+
+        document.getElementById("stat-total-generations").textContent = total;
     } catch (err) {
         console.error(err);
     }
@@ -430,44 +441,39 @@ async function selectNode(nodeId) {
             }
         }
         
+        const parentPath = node.path.substring(0, node.path.lastIndexOf("/")) || "None (Root)";
+        const levelColors = ["", "blue", "green", "orange", "yellow"];
+        const levelColor = levelColors[node.level] || "blue";
+
         detailBody.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                <h2 style="font-size:18px; font-weight:700;">${node.heading}</h2>
-                <div style="display:flex; gap:6px;">
-                    <span class="badge blue">Level ${node.level}</span>
-                    ${diffBadge}
-                </div>
-            </div>
-            
-            <div class="sidebar-version-stat" style="margin-bottom:12px; font-size:13px; color:var(--text-secondary);">
-                <span>Path:</span>
-                <strong>${node.path}</strong>
+            <div class="detail-header-row">
+                <h2 class="detail-title">${node.heading}</h2>
+                <button class="btn btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="alert('Diff view is shown below if the section has changed.')">View Changes</button>
             </div>
 
-            <div class="hash-container">
-                <span style="font-family:monospace; word-break:break-all;">Hash: ${node.content_hash}</span>
-                <button class="hash-btn" onclick="navigator.clipboard.writeText('${node.content_hash}'); alert('Hash copied to clipboard!')">Copy</button>
+            <div class="detail-meta-container">
+                <span class="badge ${levelColor}">Level ${node.level}</span>
+                <span class="badge blue">ID: ${node.id}</span>
+                <span class="badge blue">Version: ${currentVerId}</span>
+                ${diffBadge}
             </div>
 
-            <div class="control-label" style="margin-bottom:8px;">Text Content:</div>
-            <div class="section-text">${renderContentHtml(node.body_text)}</div>
-            
-            ${diffBlock}
-            
-            <table class="metadata-table">
-                <tr>
-                    <td>Logical Node ID</td>
-                    <td style="font-family:monospace;">${node.logical_id}</td>
+            <table class="metadata-table" style="margin-bottom:14px;">
+                <tr><td>Parent Section</td><td>${parentPath}</td></tr>
+                <tr><td>Content Hash</td>
+                    <td>
+                        <span style="font-family:monospace; font-size:11px;">${node.content_hash.substring(0,16)}…</span>
+                        <button class="hash-btn" style="margin-left:8px;" onclick="navigator.clipboard.writeText('${node.content_hash}')">Copy</button>
+                    </td>
                 </tr>
-                <tr>
-                    <td>Database Node ID</td>
-                    <td>${node.id}</td>
-                </tr>
-                <tr>
-                    <td>Parent Section Path</td>
-                    <td>${node.path.substring(0, node.path.lastIndexOf("/")) || "None (Root)"}</td>
-                </tr>
+                <tr><td>Logical Node ID</td><td style="font-family:monospace; font-size:11px;">${node.logical_id.substring(0,16)}…</td></tr>
+                <tr><td>Full Path</td><td style="font-size:11px;">${node.path}</td></tr>
             </table>
+
+            <div class="control-label" style="margin-bottom:8px;">Text Content</div>
+            <div class="section-text">${renderContentHtml(node.body_text)}</div>
+
+            ${diffBlock}
         `;
         
     } catch (err) {
@@ -625,28 +631,31 @@ async function loadSelectionDetails(selectionId) {
         if (!response.ok) throw new Error("Failed to load selection");
         const selection = await response.json();
         
-        // Display pinned version
-        // We will need to query the version label from the version ID or from selection details
-        // Selection schema currently lists selection nodes, name, version_id
-        document.getElementById("sel-pinned-ver").textContent = `V${selection.version_id}`;
+        // Resolve pinned version label
+        const verLabelText = document.querySelector(`#ver-selector option[value="${selection.version_id}"]`)?.textContent || `v${selection.version_id}`;
+        document.getElementById("sel-pinned-ver").textContent = verLabelText.replace(" (Latest)", "");
         document.getElementById("sel-created-on").textContent = new Date(selection.created_at).toLocaleString();
-        
-        // List selected nodes
+
+        // Render selected node tags
         const nodesList = document.getElementById("sel-nodes-list");
         nodesList.innerHTML = "";
-        
+
         selection.nodes.forEach(n => {
             const item = document.createElement("div");
             item.className = "selected-section-item";
+            // Shorten path to last two segments for readability
+            const parts = n.path.split("/").filter(Boolean);
+            const shortPath = parts.slice(-2).join(" / ");
             item.innerHTML = `
-                <span>${n.path}</span>
+                <span title="${n.path}">${shortPath}</span>
+                <span style="font-size:10px; color:var(--text-secondary);">#${n.id}</span>
             `;
             nodesList.appendChild(item);
         });
-        
-        // Load generated test cases and staleness
+
+        // Load generated test cases and staleness check
         loadTestCases(selectionId);
-        
+
     } catch (err) {
         console.error(err);
     }
@@ -679,88 +688,128 @@ async function loadTestCases(selectionId) {
         if (!response.ok) throw new Error("Failed to load test cases");
         const gen = await response.json();
         
-        // Render test cases table
-        let tableHtml = `
-            <table class="tc-table">
-                <thead>
-                    <tr>
-                        <th style="width:30px;">#</th>
-                        <th style="width:200px;">Title & Priority</th>
-                        <th>Steps</th>
-                        <th>Expected Result</th>
-                    </tr>
-                </thead>
-                <tbody>
+        // Render test cases header info
+        const selOpt = document.querySelector(`#selection-selector option[value="${selectionId}"]`);
+        const selName = selOpt?.textContent || "Selection";
+        const genTime = gen.created_at ? new Date(gen.created_at).toLocaleString() : "Unknown";
+
+        // Render test cases with two tabs: table view and raw output
+        let tcTableHtml = `
+            <div style="padding:12px 20px; background:var(--bg-main); border-bottom:1px solid var(--border); font-size:11px; color:var(--text-secondary); display:flex; gap:16px;">
+                <span><strong style="color:var(--text-primary);">Selection:</strong> ${selName}</span>
+                <span><strong style="color:var(--text-primary);">Version:</strong> v${gen.version_id || "?"}</span>
+                <span><strong style="color:var(--text-primary);">Generated:</strong> ${genTime}</span>
+            </div>
+            <div class="tabs-container" style="padding:10px 20px 0; margin-bottom:0;">
+                <button class="tab-btn active" id="tab-btn-table" onclick="showTcTab('tc-table')">Test Cases (${gen.test_cases.length})</button>
+                <button class="tab-btn" id="tab-btn-raw" onclick="showTcTab('tc-raw')">Raw LLM Output</button>
+            </div>
+
+            <div id="tc-table" style="padding:12px 20px;">
+                <table class="tc-table">
+                    <thead>
+                        <tr>
+                            <th style="width:28px;">#</th>
+                            <th>Title</th>
+                            <th style="width:80px;">Priority</th>
+                            <th style="width:70px;">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tc-tbody">
         `;
-        
+
         gen.test_cases.forEach((tc, idx) => {
-            let priorityBadge = `<span class="badge ${tc.priority === 'High' ? 'red' : tc.priority === 'Medium' ? 'orange' : 'blue'}">${tc.priority}</span>`;
-            tableHtml += `
-                <tr>
+            const pColor = tc.priority === "High" ? "red" : tc.priority === "Medium" ? "orange" : "blue";
+            const rowId = `tc-row-${idx}`;
+            const detailId = `tc-detail-${idx}`;
+            tcTableHtml += `
+                <tr class="tc-row-header" onclick="toggleTcRow('${detailId}', '${rowId}')">
                     <td>${idx + 1}</td>
-                    <td>
-                        <div style="font-weight:700; margin-bottom:4px;">${tc.title}</div>
-                        ${priorityBadge}
+                    <td style="font-weight:600;">${tc.title}</td>
+                    <td><span class="badge ${pColor}">${tc.priority}</span></td>
+                    <td><span class="badge green">Valid</span></td>
+                </tr>
+                <tr class="tc-row-details" id="${detailId}">
+                    <td colspan="4">
+                        <div class="tc-details-content">
+                            <div style="margin-bottom:8px; font-weight:600; font-size:11px; text-transform:uppercase; color:var(--text-secondary);">Steps</div>
+                            <ol style="margin-left:18px; margin-bottom:12px;">
+                                ${tc.steps.map(s => `<li style="margin-bottom:4px;">${s}</li>`).join("")}
+                            </ol>
+                            <div style="margin-bottom:6px; font-weight:600; font-size:11px; text-transform:uppercase; color:var(--text-secondary);">Expected Result</div>
+                            <div style="color:var(--text-primary);">${tc.expected_result}</div>
+                        </div>
                     </td>
-                    <td>
-                        <ol style="margin-left: 16px; font-size:12px;">
-                            ${tc.steps.map(s => `<li>${s}</li>`).join("")}
-                        </ol>
-                    </td>
-                    <td style="font-size:12px;">${tc.expected_result}</td>
                 </tr>
             `;
         });
+
+        tcTableHtml += `
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="tc-raw" style="display:none; padding:12px 20px;">
+                <pre style="background:var(--bg-main); border:1px solid var(--border); border-radius:var(--radius); padding:14px; font-size:11px; overflow:auto; max-height:300px; white-space:pre-wrap;">${JSON.stringify(gen.test_cases, null, 2)}</pre>
+            </div>
+        `;
+
+        tcBody.innerHTML = tcTableHtml;
         
-        tableHtml += '</tbody></table>';
-        
-        tcBody.innerHTML = tableHtml;
-        
-        // Show staleness if applicable
+        // Show staleness card if test cases are stale
         if (gen.is_stale) {
             stalenessCard.style.display = "block";
-            
-            // Count changed/modified nodes
+
             const changedCount = gen.impacted_nodes.filter(n => n.status === "modified").length;
             const deletedCount = gen.impacted_nodes.filter(n => n.status === "deleted").length;
-            
-            let impactNodesHtml = "";
-            gen.impacted_nodes.forEach(node => {
+            const totalInSel = (gen.impacted_nodes.length || 0);
+            const unchangedCount = Math.max(0, (gen.test_cases?.length || 0) - changedCount - deletedCount);
+            const overallStatus = (changedCount + deletedCount) > 0 ? "STALE" : "CURRENT";
+
+            let changedSectionsHtml = gen.impacted_nodes.map(node => {
                 const badgeColor = node.status === "modified" ? "yellow" : "red";
-                impactNodesHtml += `
-                    <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:12px;">
-                            <strong>${node.path}</strong>
-                            <span class="badge ${badgeColor}">${node.status.toUpperCase()}</span>
-                        </div>
-                        <div class="diff-view">${formatDiffHtml(node.diff)}</div>
+                const shortPath = node.path.split("/").filter(Boolean).slice(-2).join(" / ");
+                return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px;">
+                        <span>• ${shortPath}</span>
+                        <span class="badge ${badgeColor}">${node.status.toUpperCase()}</span>
                     </div>
                 `;
-            });
-            
+            }).join("");
+
             stalenessBody.innerHTML = `
-                <div class="alert alert-danger" style="margin-bottom:12px;">
-                    <div class="alert-title">⚠️ Test cases are STALE</div>
-                    <div>Some sections in this selection have been modified or deleted in the latest manual version.</div>
+                <div class="alert alert-danger">
+                    <div class="alert-title">⚠️ ${changedCount + deletedCount} of ${totalInSel} sections changed since test cases were generated</div>
                 </div>
-                
-                <table class="metadata-table">
+
+                <div class="control-label" style="margin-bottom:8px;">Impact Summary</div>
+                <table class="metadata-table" style="margin-bottom:14px;">
                     <tr>
-                        <td>Total Sections</td>
-                        <td>${gen.impacted_nodes.length + 1}</td>
+                        <td>Total Sections in Selection</td>
+                        <td>${totalInSel}</td>
                     </tr>
                     <tr>
-                        <td>Modified Sections</td>
-                        <td><span style="color:var(--warning); font-weight:700;">${changedCount}</span></td>
+                        <td>Changed</td>
+                        <td><span style="color:var(--warning); font-weight:600;">${changedCount}</span></td>
                     </tr>
                     <tr>
-                        <td>Deleted Sections</td>
-                        <td><span style="color:var(--error); font-weight:700;">${deletedCount}</span></td>
+                        <td>Deleted</td>
+                        <td><span style="color:var(--error); font-weight:600;">${deletedCount}</span></td>
+                    </tr>
+                    <tr>
+                        <td>Unchanged</td>
+                        <td><span style="color:var(--success); font-weight:600;">${unchangedCount}</span></td>
+                    </tr>
+                    <tr>
+                        <td>Overall Status</td>
+                        <td><span class="badge ${overallStatus === 'STALE' ? 'red' : 'green'}">${overallStatus}</span></td>
                     </tr>
                 </table>
-                
-                <div class="control-label" style="margin-top:16px;">Impacted Section Diffs:</div>
-                ${impactNodesHtml}
+
+                <div class="control-label" style="margin-bottom:8px;">Changed Sections</div>
+                ${changedSectionsHtml}
+
+                <button class="btn btn-secondary" style="margin-top:14px; width:100%; justify-content:center;" onclick="viewDetailedDiffs(${selectionId})">View Detailed Diff →</button>
             `;
         } else {
             stalenessCard.style.display = "none";
@@ -888,4 +937,65 @@ function handleSearch(query) {
             }
         }
     });
+}
+
+// Toggle test case row expansion
+function toggleTcRow(detailId, rowId) {
+    const detail = document.getElementById(detailId);
+    if (!detail) return;
+    detail.classList.toggle("expanded");
+}
+
+// Switch between test case table and raw LLM output tabs
+function showTcTab(tabId) {
+    ["tc-table", "tc-raw"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = id === tabId ? "block" : "none";
+    });
+    // Update tab button highlights
+    const tableBtn = document.getElementById("tab-btn-table");
+    const rawBtn = document.getElementById("tab-btn-raw");
+    if (tableBtn) tableBtn.classList.toggle("active", tabId === "tc-table");
+    if (rawBtn) rawBtn.classList.toggle("active", tabId === "tc-raw");
+}
+
+// View detailed diffs for a selection (expands staleness card diff view)
+async function viewDetailedDiffs(selectionId) {
+    const stalenessBody = document.getElementById("staleness-body");
+    if (!stalenessBody) return;
+
+    try {
+        const response = await fetch(`/api/selections/${selectionId}/test-cases`);
+        if (!response.ok) return;
+        const gen = await response.json();
+
+        let diffHtml = "<div style='margin-top:16px;'>";
+        gen.impacted_nodes.forEach(node => {
+            const badgeColor = node.status === "modified" ? "yellow" : "red";
+            const shortPath = node.path.split("/").filter(Boolean).slice(-2).join(" / ");
+            diffHtml += `
+                <div style="margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <strong style="font-size:12px;">${shortPath}</strong>
+                        <span class="badge ${badgeColor}">${node.status.toUpperCase()}</span>
+                    </div>
+                    <div class="diff-view">${formatDiffHtml(node.diff)}</div>
+                </div>
+            `;
+        });
+        diffHtml += "</div>";
+
+        // Append to staleness body after the table
+        const existingDiff = stalenessBody.querySelector("#diff-detail-block");
+        if (existingDiff) {
+            existingDiff.remove();
+        }
+        const diffBlock = document.createElement("div");
+        diffBlock.id = "diff-detail-block";
+        diffBlock.innerHTML = `<div class="control-label" style="margin-bottom:8px; margin-top:8px;">Detailed Diffs</div>${diffHtml}`;
+        stalenessBody.appendChild(diffBlock);
+
+    } catch (err) {
+        console.error(err);
+    }
 }
