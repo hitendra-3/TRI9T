@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CardioTrack QA CT-200 Manual System</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <span class="logo-icon">💙</span>
+            <div>
+                <div class="logo-text">CardioTrack QA</div>
+                <div class="logo-subtext">CT-200 Manual System</div>
+            </div>
+        </div>
+        <ul class="sidebar-menu">
+            <a href="#" class="menu-item active">
+                <span>📊</span> Dashboard
+            </a>
+            <a href="#" class="menu-item" onclick="openIngestModal()">
+                <span>📥</span> Ingest Version
+            </a>
+            <a href="/docs" target="_blank" class="menu-item">
+                <span>📖</span> Swagger API Docs
+            </a>
+        </ul>
+
+        <div class="sidebar-version-card" id="sidebar-version-info">
+            <div class="sidebar-version-title">Current Version</div>
+            <div class="sidebar-version-stat">
+                <span>Label:</span>
+                <span id="side-ver-label">None</span>
+            </div>
+            <div class="sidebar-version-stat">
+                <span>Nodes:</span>
+                <span id="side-ver-nodes">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-wrapper">
+        <div class="header">
+            <div class="header-title-container">
+                <h1>Dashboard</h1>
+            </div>
+            <div class="header-controls">
+                <div class="control-group">
+                    <span class="control-label">Current Document:</span>
+                    <select id="doc-selector" onchange="loadDocumentVersions(this.value)">
+                        <!-- Loaded dynamically -->
+                    </select>
+                </div>
+                <div class="control-group">
+                    <span class="control-label">Version:</span>
+                    <select id="ver-selector" onchange="loadVersionDetails(this.value)">
+                        <!-- Loaded dynamically -->
+                    </select>
+                </div>
+                <button class="btn-theme-toggle" onclick="toggleTheme()" title="Toggle Dark/Light Mode">🌓</button>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Top Stats Card Row -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon blue">📂</div>
+                    <div>
+                        <div class="stat-value" id="stat-total-sections">0</div>
+                        <div class="stat-label">Total Sections</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green">✨</div>
+                    <div>
+                        <div class="stat-value" id="stat-new-sections">0</div>
+                        <div class="stat-label">New in Version</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon orange">🔄</div>
+                    <div>
+                        <div class="stat-value" id="stat-modified-sections">0</div>
+                        <div class="stat-label">Changed Sections</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon purple">🗳️</div>
+                    <div>
+                        <div class="stat-value" id="stat-total-selections">0</div>
+                        <div class="stat-label">Total Selections</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Layout Grid -->
+            <div class="dashboard-grid">
+                
+                <!-- Left Column: Document Structure -->
+                <div class="card" style="grid-column: 1;">
+                    <div class="card-header">
+                        <div class="card-title">🌲 Document Structure</div>
+                    </div>
+                    <div class="tree-search-container">
+                        <input type="text" id="tree-search" placeholder="Search sections..." oninput="handleSearch(this.value)" style="width:100%;">
+                    </div>
+                    <div class="tree-container" id="tree-root">
+                        <!-- Rendered dynamically -->
+                        <div class="text-secondary" style="font-size: 13px; text-align: center; padding: 20px;">No document ingested yet. Click 'Ingest Version' to get started!</div>
+                    </div>
+                </div>
+
+                <!-- Middle Column: Section Details and Test Cases -->
+                <div style="grid-column: 2; display: flex; flex-direction: column; gap: 24px;">
+                    
+                    <!-- Section Detail Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📄 Section Details</div>
+                        </div>
+                        <div class="card-body" id="section-detail-body">
+                            <div style="text-align: center; color: var(--text-secondary); padding: 40px 20px;">
+                                Select a node from the document structure tree to view details.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Generated Test Cases Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🧪 Generated Test Cases</div>
+                            <button class="btn btn-primary" id="btn-generate-tc" onclick="triggerTestGeneration()" style="display:none;">⚡ Generate Test Cases</button>
+                        </div>
+                        <div class="card-body" id="test-cases-body">
+                            <div style="text-align: center; color: var(--text-secondary); padding: 40px 20px;">
+                                Select or create a selection in the right-hand panel, then generate test cases.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Active Selection & Staleness -->
+                <div style="grid-column: 3; display: flex; flex-direction: column; gap: 24px;">
+                    
+                    <!-- Selection Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📌 Active Selection</div>
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size:11px;" onclick="openCreateSelectionModal()">Create New</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group" style="margin-bottom: 16px;">
+                                <label class="control-label">Select Saved Set:</label>
+                                <select id="selection-selector" onchange="loadSelectionDetails(this.value)" style="width:100%;">
+                                    <option value="">-- Choose Selection --</option>
+                                    <!-- Loaded dynamically -->
+                                </select>
+                            </div>
+
+                            <div id="selection-details-pane" style="display:none;">
+                                <div class="sidebar-version-stat" style="margin-bottom: 6px;">
+                                    <span class="control-label">Pinned Version:</span>
+                                    <span id="sel-pinned-ver" class="badge blue">None</span>
+                                </div>
+                                <div class="sidebar-version-stat" style="margin-bottom: 12px;">
+                                    <span class="control-label">Created On:</span>
+                                    <span id="sel-created-on" style="font-size:12px;">-</span>
+                                </div>
+                                
+                                <div class="control-label" style="margin-top: 12px;">Selected Sections:</div>
+                                <div class="selected-sections-list" id="sel-nodes-list">
+                                    <!-- Loaded dynamically -->
+                                </div>
+                            </div>
+                            
+                            <div id="selection-empty-pane" style="text-align: center; color: var(--text-secondary); padding: 20px 0;">
+                                Select an existing selection or click "Create New" to package selected sections.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Staleness / Impact Detection Card -->
+                    <div class="card" id="staleness-card" style="display:none;">
+                        <div class="card-header">
+                            <div class="card-title">⚠️ Staleness / Impact</div>
+                        </div>
+                        <div class="card-body" id="staleness-body">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Ingest Modal -->
+    <div class="modal-overlay" id="ingest-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>📥 Ingest Document Version</span>
+                <span class="modal-close" onclick="closeIngestModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="control-label">Document Name:</label>
+                    <input type="text" id="ingest-doc-name" value="CardioTrack CT-200">
+                </div>
+                <div class="form-group">
+                    <label class="control-label">Version Label:</label>
+                    <input type="text" id="ingest-ver-label" placeholder="e.g. v1, v2">
+                </div>
+                <div class="form-group">
+                    <label class="control-label">Preset Files (Optional):</label>
+                    <div style="display:flex; gap:10px;">
+                        <button class="btn btn-secondary" onclick="loadPresetFile('ct200_manual.md', 'v1')">Load Manual V1</button>
+                        <button class="btn btn-secondary" onclick="loadPresetFile('ct200_manual_v2.md', 'v2')">Load Manual V2</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label">Markdown Content:</label>
+                    <textarea id="ingest-content" rows="12" placeholder="Paste markdown file contents here..." style="font-family:monospace; resize: vertical;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeIngestModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitIngestion()">Ingest</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Selection Modal -->
+    <div class="modal-overlay" id="selection-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>📌 Create Named Selection</span>
+                <span class="modal-close" onclick="closeCreateSelectionModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="control-label">Selection Name:</label>
+                    <input type="text" id="new-selection-name" placeholder="e.g., Safety & Alarms Testing">
+                </div>
+                <div class="alert alert-warning" style="margin-bottom: 0;">
+                    <div class="alert-title">💡 Instructions</div>
+                    Ensure you have selected checkboxes next to the sections you want in the <strong>Document Structure Tree</strong> before clicking Create.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCreateSelectionModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitCreateSelection()">Create Selection</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

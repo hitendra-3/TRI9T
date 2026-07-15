@@ -16,7 +16,7 @@ def setup_db():
 client = TestClient(app)
 
 def test_api_health_check():
-    response = client.get("/")
+    response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
 

@@ -14,8 +14,38 @@ class IngestRequest(BaseModel):
     version_label: str
     markdown_content: str
 
+@router.get("/presets/{filename}", response_model=dict)
+def get_preset_file(filename: str):
+    """
+    Retrieves the content of a preset manual from the data/ folder.
+    """
+    import os
+    if filename not in ["ct200_manual.md", "ct200_manual_v2.md"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid preset filename. Only ct200_manual.md and ct200_manual_v2.md are supported."
+        )
+    
+    preset_path = os.path.join("data", filename)
+    if not os.path.exists(preset_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Preset file {filename} not found."
+        )
+    
+    try:
+        with open(preset_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"filename": filename, "content": content}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read preset: {str(e)}"
+        )
+
 @router.post("/ingest", response_model=dict, status_code=status.HTTP_201_CREATED)
 def ingest_document(payload: IngestRequest, db: Session = Depends(get_db)):
+
     """
     Ingests a new version of a document. Parses, matches structure, and persists it.
     """

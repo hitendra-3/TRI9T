@@ -1,5 +1,7 @@
 import os
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from dotenv import load_dotenv
 from app.database import engine, Base
 from app.routes import documents, versions, nodes, selections, generation
@@ -23,10 +25,20 @@ app.include_router(nodes.router)
 app.include_router(selections.router)
 app.include_router(generation.router)
 
+# Mount static files for frontend UI
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 @app.get("/")
 def read_root():
-    return {
-        "status": "healthy",
-        "system": "CardioTrack QA Manual API",
-        "documentation": "/docs"
-    }
+    """
+    Redirects the root path to the interactive Dashboard UI.
+    """
+    return RedirectResponse(url="/static/index.html")
+
+@app.get("/health")
+def read_health():
+    """
+    Returns API health status.
+    """
+    return {"status": "healthy"}
+
