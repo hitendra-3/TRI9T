@@ -1,6 +1,9 @@
 # CardioTrack QA Manual System Backend
 
-This repository contains a backend REST API designed to ingest the CardioTrack CT-200 manual, parse it into a versioned hierarchical tree, manage user-defined selections, generate QA test cases using Gemini 2.5 Flash, and track staleness of those test cases when the document is updated.
+> [!NOTE]
+> **Working Demonstration Screenshots**: View all operation and dashboard screenshots here: [Google Drive Screenshots Folder](https://drive.google.com/drive/folders/1gpIrl1c0nBnuiedEt8883r-Q69MKIqiv?usp=sharing)
+
+This repository contains a backend REST API designed to ingest the CardioTrack CT-200 manual, parse it into a versioned hierarchical tree, manage user-defined selections, generate QA test cases using Gemini 3.1 Flash Lite, and track staleness of those test cases when the document is updated.
 
 ---
 
