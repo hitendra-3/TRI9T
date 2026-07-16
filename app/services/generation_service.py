@@ -1,20 +1,76 @@
+"""
+Generation service — stores QA test cases in MongoDB Atlas.
+
+Storage design:
+  - SQLite: selections, nodes, versions (relational, joins needed)
+  - MongoDB: generated_test_cases (document-oriented, schema-flexible, no joins needed)
+
+Each MongoDB document has the following shape:
+{
+  "selection_id":  int,               # FK to SQLite selections.id (unique index)
+  "document_name": str,               # denormalised for fast reads
+  "version_label": str,               # which version was selected when generated
+  "prompt":        str,               # full prompt sent to LLM
+  "raw_response":  str,               # raw LLM text output
+  "test_cases": [                     # Pydantic-validated, structured array
+    {
+      "title":           str,
+      "steps":           [str],
+      "expected_result": str,
+      "priority":        str
+    }
+  ],
+  "source_node_snapshots": {          # content_hash per logical_id at generation time
+    "<logical_id>": "<content_hash>"  # enables precise staleness detection
+  },
+  "created_at": datetime
+}
+"""
+
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from app.models import Selection, GeneratedTestCases, Node, DocumentVersion, Document
+from app.models import Selection, Node, DocumentVersion
 from app.llm import generate_qa_test_cases
 from app.diff import generate_diff
+from app.mongodb import get_test_cases_collection
+from bson import ObjectId
 import json
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _to_serialisable(doc: dict) -> dict:
+    """Convert MongoDB document to JSON-serialisable dict."""
+    if doc is None:
+        return None
+    doc = dict(doc)
+    if "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    if "created_at" in doc and hasattr(doc["created_at"], "isoformat"):
+        doc["created_at"] = doc["created_at"].isoformat()
+    return doc
+
+
+# ─── Core Generation ──────────────────────────────────────────────────────────
 
 def generate_test_cases_for_selection(
     db: Session,
     selection_id: int,
     force: bool = False,
     model_name: str = "gemini-2.5-flash"
-) -> GeneratedTestCases:
+) -> dict:
     """
-    Generates QA test cases for a selection.
-    If force is False, returns cached generation if it exists.
-    Otherwise makes a call to Gemini.
+    Generates QA test cases for a selection and stores them in MongoDB.
+
+    Duplicate policy:
+      - force=False (default): return the cached MongoDB document if it exists.
+      - force=True:            call the LLM again and REPLACE the existing document.
+
+    This design means old test cases are overwritten (not versioned) on force.
+    Rationale: regeneration is an explicit user choice; keeping old versions
+    alongside new ones would require a separate history collection and adds
+    complexity without clear benefit for a QA workflow.
     """
     selection = db.query(Selection).filter(Selection.id == selection_id).first()
     if not selection:
@@ -22,28 +78,36 @@ def generate_test_cases_for_selection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Selection with ID {selection_id} not found."
         )
-        
-    # Check cache
-    existing_gen = db.query(GeneratedTestCases).filter(GeneratedTestCases.selection_id == selection_id).first()
-    if existing_gen and not force:
-        return existing_gen
-        
-    # Reconstruct text content of selected nodes sorted by ID (maintaining document order)
+
+    col = get_test_cases_collection()
+
+    # ── Cache check ──────────────────────────────────────────────────────────
+    existing = col.find_one({"selection_id": selection_id})
+    if existing and not force:
+        return _to_serialisable(existing)
+
+    # ── Build context from selected nodes ────────────────────────────────────
     nodes = sorted(selection.nodes, key=lambda n: n.id)
     if not nodes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The selection has no nodes linked to it."
         )
-        
+
     context_parts = []
+    source_snapshots = {}
     for node in nodes:
-        context_parts.append(f"Heading: {node.heading}\nPath: {node.path}\nLevel: {node.level}\nContent:\n{node.body_text}")
+        context_parts.append(
+            f"Heading: {node.heading}\nPath: {node.path}\n"
+            f"Level: {node.level}\nContent:\n{node.body_text}"
+        )
+        source_snapshots[node.logical_id] = node.content_hash
+
     context_text = "\n\n---\n\n".join(context_parts)
-    
     doc_name = selection.version.document.name
-    
-    # Call LLM
+    version_label = selection.version.version_label
+
+    # ── Call LLM ─────────────────────────────────────────────────────────────
     try:
         result = generate_qa_test_cases(doc_name, context_text, model_name)
     except Exception as e:
@@ -51,34 +115,45 @@ def generate_test_cases_for_selection(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM Generation failed: {str(e)}"
         )
-        
-    # Save/Update in DB
-    if existing_gen:
-        existing_gen.prompt = result["prompt"]
-        existing_gen.raw_response = result["raw_response"]
-        existing_gen.test_cases = result["test_cases"]
-        db.commit()
-        db.refresh(existing_gen)
-        return existing_gen
-    else:
-        new_gen = GeneratedTestCases(
-            selection_id=selection_id,
-            prompt=result["prompt"],
-            raw_response=result["raw_response"],
-            test_cases=result["test_cases"]
-        )
-        db.add(new_gen)
-        db.commit()
-        db.refresh(new_gen)
-        return new_gen
 
-def get_generation_with_staleness(
-    db: Session,
-    selection_id: int
-) -> dict:
+    # ── Persist to MongoDB ────────────────────────────────────────────────────
+    mongo_doc = {
+        "selection_id": selection_id,
+        "document_name": doc_name,
+        "version_label": version_label,
+        "prompt": result["prompt"],
+        "raw_response": result["raw_response"],
+        "test_cases": result["test_cases"],
+        "source_node_snapshots": source_snapshots,
+        "created_at": datetime.now(timezone.utc)
+    }
+
+    if existing:
+        col.replace_one({"selection_id": selection_id}, mongo_doc)
+        mongo_doc = col.find_one({"selection_id": selection_id})
+    else:
+        insert_result = col.insert_one(mongo_doc)
+        mongo_doc["_id"] = insert_result.inserted_id
+
+    return _to_serialisable(mongo_doc)
+
+
+# ─── Staleness Detection ──────────────────────────────────────────────────────
+
+def get_generation_with_staleness(db: Session, selection_id: int) -> dict:
     """
-    Retrieves the generated test cases for a selection and detects staleness
-    against the latest version of the document.
+    Retrieves the generated test cases from MongoDB and computes staleness
+    by comparing source_node_snapshots against the current latest version.
+
+    Staleness logic:
+      - We stored the content_hash of each node AT GENERATION TIME.
+      - We look up each node's current hash in the latest document version.
+      - If any hash differs, the test case is stale (even for a single word change).
+
+    Honest limitation: a one-word prose change is treated identically to a
+    changed numeric threshold (e.g. 299 mmHg → 250 mmHg). Both are flagged
+    as stale. A future improvement would parse diffs for numeric changes and
+    assign them higher priority ("critical-stale" vs "prose-stale").
     """
     selection = db.query(Selection).filter(Selection.id == selection_id).first()
     if not selection:
@@ -86,95 +161,90 @@ def get_generation_with_staleness(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Selection with ID {selection_id} not found."
         )
-        
-    gen = db.query(GeneratedTestCases).filter(GeneratedTestCases.selection_id == selection_id).first()
-    if not gen:
+
+    col = get_test_cases_collection()
+    mongo_doc = col.find_one({"selection_id": selection_id})
+    if not mongo_doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No test cases have been generated for selection {selection_id} yet."
         )
-        
-    # Detect staleness
-    # 1. Get latest version of the document
+
+    # ── Latest version lookup ─────────────────────────────────────────────────
     doc_id = selection.version.document_id
-    latest_version = db.query(DocumentVersion)\
-        .filter(DocumentVersion.document_id == doc_id)\
-        .order_by(DocumentVersion.created_at.desc())\
+    latest_version = (
+        db.query(DocumentVersion)
+        .filter(DocumentVersion.document_id == doc_id)
+        .order_by(DocumentVersion.created_at.desc())
         .first()
-        
+    )
+
     is_stale = False
     staleness_reasons = []
     impacted_nodes = []
-    
-    # 2. Compare pinned selection nodes to latest version nodes
-    pinned_version_label = selection.version.version_label
-    latest_version_label = latest_version.version_label if latest_version else "Unknown"
-    
-    # If the selection version is indeed the latest version, then it's not stale
+
+    pinned_label = selection.version.version_label
+    latest_label = latest_version.version_label if latest_version else "Unknown"
+
     if latest_version and selection.version_id != latest_version.id:
-        # Fetch latest nodes indexed by logical_id for fast lookup
+        # Build lookup: logical_id → (current_hash, node)
         latest_nodes = db.query(Node).filter(Node.version_id == latest_version.id).all()
-        latest_nodes_by_logical = {n.logical_id: n for n in latest_nodes}
-        
-        for p_node in selection.nodes:
-            # Find counterpart in latest version by logical ID
-            l_node = latest_nodes_by_logical.get(p_node.logical_id)
-            
-            node_status = "unchanged"
-            diff_text = None
-            
+        latest_by_logical = {n.logical_id: n for n in latest_nodes}
+
+        # source_node_snapshots may be missing in old docs (pre-MongoDB migration)
+        snapshots = mongo_doc.get("source_node_snapshots") or {
+            n.logical_id: n.content_hash for n in selection.nodes
+        }
+
+        for logical_id, old_hash in snapshots.items():
+            l_node = latest_by_logical.get(logical_id)
+
             if not l_node:
-                # Node deleted
                 is_stale = True
-                node_status = "deleted"
-                reason = f"Section '{p_node.path}' was deleted in version {latest_version_label}."
-                staleness_reasons.append(reason)
-                impacted_nodes.append({
-                    "node_id": p_node.id,
-                    "logical_id": p_node.logical_id,
-                    "path": p_node.path,
-                    "status": "deleted",
-                    "diff": f"--- {pinned_version_label}\n+++ {latest_version_label}\n@@ -1 +0,0 @@\n- {p_node.body_text[:100]}..."
-                })
-            elif p_node.content_hash != l_node.content_hash:
-                # Node modified
-                is_stale = True
-                node_status = "modified"
-                diff_text = generate_diff(
-                    p_node.body_text,
-                    l_node.body_text,
-                    pinned_version_label,
-                    latest_version_label
+                staleness_reasons.append(
+                    f"Node '{logical_id}' was deleted in version {latest_label}."
                 )
-                reason = f"Section '{p_node.path}' was modified in version {latest_version_label}."
-                staleness_reasons.append(reason)
                 impacted_nodes.append({
-                    "node_id": p_node.id,
-                    "logical_id": p_node.logical_id,
-                    "path": p_node.path,
+                    "logical_id": logical_id,
+                    "status": "deleted",
+                    "diff": f"Section deleted in {latest_label}."
+                })
+            elif l_node.content_hash != old_hash:
+                is_stale = True
+                # Fetch old body text from pinned selection node
+                pinned_node = next(
+                    (n for n in selection.nodes if n.logical_id == logical_id), None
+                )
+                old_body = pinned_node.body_text if pinned_node else ""
+                diff_text = generate_diff(old_body, l_node.body_text, pinned_label, latest_label)
+                staleness_reasons.append(
+                    f"Section '{l_node.path}' was modified in version {latest_label}."
+                )
+                impacted_nodes.append({
+                    "logical_id": logical_id,
+                    "heading": l_node.title,
+                    "path": l_node.path,
                     "status": "modified",
                     "diff": diff_text
                 })
-                
-    staleness_reason_str = "; ".join(staleness_reasons) if staleness_reasons else None
-    
-    return {
-        "id": gen.id,
-        "selection_id": gen.selection_id,
-        "test_cases": gen.test_cases,
-        "created_at": gen.created_at,
-        "is_stale": is_stale,
-        "staleness_reason": staleness_reason_str,
-        "impacted_nodes": impacted_nodes
-    }
 
-def get_generations_for_node(
-    db: Session,
-    node_id: int
-) -> list:
+    doc_out = _to_serialisable(mongo_doc)
+    doc_out.update({
+        "selection_id": selection_id,
+        "version_id": selection.version_id,
+        "is_stale": is_stale,
+        "staleness_reason": "; ".join(staleness_reasons) if staleness_reasons else None,
+        "impacted_nodes": impacted_nodes
+    })
+    return doc_out
+
+
+# ─── Retrieval by Node ────────────────────────────────────────────────────────
+
+def get_generations_for_node(db: Session, node_id: int) -> list:
     """
-    Fetches all generated test cases that include a specific node ID (logical matching).
-    Returns list of dicts with test cases, selection metadata, and staleness details.
+    Fetches all MongoDB generation documents that included a given node
+    (matched by logical_id across all versions).
     """
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
@@ -182,20 +252,19 @@ def get_generations_for_node(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Node with ID {node_id} not found."
         )
-        
-    # To find generations linked to this logical node, we find all selections
-    # that contain any Node sharing node.logical_id.
-    selections = db.query(Selection)\
-        .join(Selection.nodes)\
-        .filter(Node.logical_id == node.logical_id)\
+
+    # Find all selections that contain this logical_id
+    selections = (
+        db.query(Selection)
+        .join(Selection.nodes)
+        .filter(Node.logical_id == node.logical_id)
         .all()
-        
+    )
+
     results = []
     for sel in selections:
-        # Check if there is an associated test case generation
-        gen = db.query(GeneratedTestCases).filter(GeneratedTestCases.selection_id == sel.id).first()
-        if gen:
-            staleness_details = get_generation_with_staleness(db, sel.id)
-            results.append(staleness_details)
-            
+        col = get_test_cases_collection()
+        if col.find_one({"selection_id": sel.id}):
+            results.append(get_generation_with_staleness(db, sel.id))
+
     return results

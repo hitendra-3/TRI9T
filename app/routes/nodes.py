@@ -54,8 +54,19 @@ def search_nodes(
     db: Session = Depends(get_db)
 ):
     """
-    Searches/filters sections across headings or body text using a simple SQLite LIKE search.
+    Full-text search across node headings and body text using SQLite FTS5.
+
+    FTS5 advantages over LIKE search:
+    - Word-boundary tokenisation: "error" matches "error" but not "errors" unless suffix used
+    - Phrase search: enclose in quotes e.g. ?query="battery life"
+    - Prefix search: append * e.g. ?query=batter*
+    - BM25 ranking: results ordered by relevance, not insertion order
+    - Significantly faster than LIKE on large documents
+
+    Falls back to SQL LIKE if FTS5 table is unavailable.
     """
+    from sqlalchemy import text as sqltext
+
     if version_id is None:
         latest = db.query(DocumentVersion)\
             .filter(DocumentVersion.document_id == document_id)\
@@ -67,13 +78,58 @@ def search_nodes(
                 detail=f"No versions found for document ID {document_id}."
             )
         version_id = latest.id
-        
+
+    # ── FTS5 search ───────────────────────────────────────────────────────────
+    try:
+        # Sanitise query: escape special FTS5 characters, support prefix search
+        safe_query = query.strip()
+        # If user didn't add explicit FTS5 operators, make it prefix-friendly
+        if not any(c in safe_query for c in ['"', '*', 'AND', 'OR', 'NOT']):
+            # Wrap each word as prefix so "battery" matches "battery life" etc.
+            words = safe_query.split()
+            safe_query = " OR ".join(f'"{w}"*' for w in words if w)
+
+        fts_sql = sqltext("""
+            SELECT n.id, n.document_id, n.version_id, n.logical_id,
+                   n.heading, n.title, n.level, n.body_text,
+                   n.content_hash, n.parent_id, n.path,
+                   bm25(nodes_fts) as rank
+            FROM nodes n
+            JOIN nodes_fts ON nodes_fts.rowid = n.id
+            WHERE nodes_fts MATCH :query
+              AND n.version_id = :version_id
+              AND n.document_id = :document_id
+            ORDER BY rank
+            LIMIT 50
+        """)
+
+        rows = db.execute(fts_sql, {
+            "query": safe_query,
+            "version_id": version_id,
+            "document_id": document_id
+        }).fetchall()
+
+        # Map raw rows to Node ORM objects for serialisation
+        if rows:
+            node_ids = [r[0] for r in rows]
+            nodes_ordered = []
+            nodes_by_id = {n.id: n for n in db.query(Node).filter(Node.id.in_(node_ids)).all()}
+            for nid in node_ids:
+                if nid in nodes_by_id:
+                    nodes_ordered.append(nodes_by_id[nid])
+            return nodes_ordered
+
+    except Exception as fts_err:
+        # FTS5 table not yet created or query syntax error — fall back to LIKE
+        print(f"[FTS5] Falling back to LIKE search: {fts_err}")
+
+    # ── Fallback: SQL LIKE ────────────────────────────────────────────────────
     search_pattern = f"%{query}%"
     nodes = db.query(Node).filter(
         Node.version_id == version_id,
         (Node.heading.like(search_pattern) | Node.body_text.like(search_pattern))
     ).all()
-    
+
     return nodes
 
 @router.get("/{node_id}", response_model=NodeDetailResponse)

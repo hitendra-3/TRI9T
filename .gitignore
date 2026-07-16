@@ -1,6 +1,34 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+
+# Virtual environment
 .venv/
+venv/
+env/
+
+# Database files
 *.db
+*.db-shm
+*.db-wal
+
+# Environment / secrets
 .env
+.env.*
+
+# Test / build artefacts
 .pytest_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# Local fallback data store (not committed — auto-generated at runtime)
+data/local_generated_test_cases.json
+
+# IDE
+.vscode/
+.idea/
+*.swp

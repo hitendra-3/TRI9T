@@ -1,19 +1,61 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.database import get_db
+from app.database import get_db, engine, Base
 from app.schemas import DocumentResponse, DocumentVersionResponse, DocumentCreate
-from app.models import Document, DocumentVersion, Node
+from app.models import Document, DocumentVersion, Node, Selection, GeneratedTestCases, selection_nodes
 from app.services.ingest_service import ingest_document_version
-from app.parser import parse_markdown
+from app.parser import parse_markdown, parse_pdf_to_markdown
 from pydantic import BaseModel
+from sqlalchemy import text
+import base64
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
+
+# ── Admin: Clear DB ──────────────────────────────────────────────────────────
+@router.delete("/admin/clear-db", tags=["Admin"])
+def clear_database(db: Session = Depends(get_db)):
+    """
+    Drops all data from every table and resets sequences.
+    FOR TESTING ONLY.
+    """
+    try:
+        # Delete in FK-safe order
+        # Note: generated_test_cases is now stored in MongoDB; the SQLite table may not exist
+        try:
+            db.execute(text("DELETE FROM generated_test_cases"))
+        except Exception:
+            pass  # Table moved to MongoDB
+        db.execute(text("DELETE FROM selection_nodes"))
+        db.execute(text("DELETE FROM selections"))
+        db.execute(text("DELETE FROM nodes"))
+        db.execute(text("DELETE FROM document_versions"))
+        db.execute(text("DELETE FROM documents"))
+        # Reset SQLite auto-increment counters
+        for tbl in ["selection_nodes","selections","nodes","document_versions","documents"]:
+            try:
+                db.execute(text(f"DELETE FROM sqlite_sequence WHERE name='{tbl}'"))
+            except Exception:
+                pass
+        db.commit()
+        
+        # Clear MongoDB/local JSON collection as well
+        from app.mongodb import clear_mongo_collections
+        clear_mongo_collections()
+        
+        return {"status": "cleared", "message": "All data has been wiped. Ready for fresh testing."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Clear failed: {str(e)}")
+
+
 
 class IngestRequest(BaseModel):
     document_name: str
     version_label: str
-    markdown_content: str
+    markdown_content: Optional[str] = None
+    file_base64: Optional[str] = None
+    file_type: Optional[str] = None  # "pdf", "md", "txt"
     force: bool = False
     is_new_document: bool = False
     document_id: Optional[int] = None
@@ -53,6 +95,25 @@ def ingest_document(payload: IngestRequest, db: Session = Depends(get_db)):
     Ingests a new version of a document. Parses, matches structure, and persists it.
     If mismatch with previous version exceeds 70%, returns a warning unless force=True.
     """
+    # 0. Decode and parse PDF/Text base64 if provided
+    if payload.file_base64:
+        try:
+            file_bytes = base64.b64decode(payload.file_base64)
+            if payload.file_type == "pdf":
+                payload.markdown_content = parse_pdf_to_markdown(file_bytes)
+            else:
+                payload.markdown_content = file_bytes.decode("utf-8", errors="replace")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to process uploaded file: {str(e)}"
+            )
+
+    if not payload.markdown_content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either markdown_content or file_base64 must be provided."
+        )
     # 1. Resolve document
     doc = None
     if payload.document_id:

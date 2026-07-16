@@ -1,6 +1,14 @@
-from datetime import datetime
-from typing import List, Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
+from typing import List, Optional, Any, Annotated
+from pydantic import BaseModel, Field, ConfigDict, PlainSerializer
+
+def serialize_dt(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+UTCDateTime = Annotated[datetime, PlainSerializer(serialize_dt, return_type=str)]
+
 
 # Document Schemas
 class DocumentCreate(BaseModel):
@@ -9,7 +17,7 @@ class DocumentCreate(BaseModel):
 class DocumentResponse(BaseModel):
     id: int
     name: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -18,7 +26,7 @@ class DocumentVersionResponse(BaseModel):
     id: int
     document_id: int
     version_label: str
-    created_at: datetime
+    created_at: UTCDateTime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,7 +70,7 @@ class SelectionResponse(BaseModel):
     id: int
     name: str
     version_id: int
-    created_at: datetime
+    created_at: UTCDateTime
     nodes: List[NodeResponse]
 
     model_config = ConfigDict(from_attributes=True)
@@ -81,10 +89,13 @@ class GeneratedTestCasesList(BaseModel):
 class TestCasesResponse(BaseModel):
     id: int
     selection_id: int
+    version_id: Optional[int] = None   # version the selection was pinned to
+    raw_response: Optional[str] = None  # Raw text from the LLM
     test_cases: List[TestCase]
-    created_at: datetime
+    created_at: UTCDateTime
     is_stale: bool
     staleness_reason: Optional[str] = None
     impacted_nodes: List[dict] = []  # Details on which nodes changed
 
     model_config = ConfigDict(from_attributes=True)
+
