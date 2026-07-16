@@ -325,7 +325,7 @@ function handleDocFileUpload(input) {
             document.getElementById("upload-doc-content").value = e.target.result;
             document.getElementById("upload-doc-content").disabled = false;
         };
-        reader.readAsText(file);
+        reader.readAsText(file, "UTF-8");
     }
 }
 
@@ -355,7 +355,7 @@ function handleVerFileUpload(input) {
             document.getElementById("upload-ver-content").value = e.target.result;
             document.getElementById("upload-ver-content").disabled = false;
         };
-        reader.readAsText(file);
+        reader.readAsText(file, "UTF-8");
     }
 }
 
