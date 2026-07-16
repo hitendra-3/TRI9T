@@ -134,7 +134,7 @@ def parse_pdf_via_gemini(pdf_bytes: bytes) -> str:
         raise ValueError("GEMINI_API_KEY environment variable is not set. Please set it in a .env file.")
         
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-3.1-flash-lite")
     
     prompt = """
 You are an expert document parsing agent.

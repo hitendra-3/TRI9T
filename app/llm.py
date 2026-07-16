@@ -5,7 +5,7 @@ import google.generativeai as genai
 from typing import Dict, Any
 from app.schemas import GeneratedTestCasesList
 
-def generate_qa_test_cases(doc_name: str, context_text: str, model_name: str = "gemini-1.5-flash") -> Dict[str, Any]:
+def generate_qa_test_cases(doc_name: str, context_text: str, model_name: str = "gemini-3.1-flash-lite") -> Dict[str, Any]:
     """
     Sends the selected manual text to Google Gemini 2.5 Flash to generate
     3 to 5 QA test cases. Enforces JSON structured output and performs validation

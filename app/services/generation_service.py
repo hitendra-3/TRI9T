@@ -58,7 +58,7 @@ def generate_test_cases_for_selection(
     db: Session,
     selection_id: int,
     force: bool = False,
-    model_name: str = "gemini-1.5-flash"
+    model_name: str = "gemini-3.1-flash-lite"
 ) -> dict:
     """
     Generates QA test cases for a selection and stores them in MongoDB.

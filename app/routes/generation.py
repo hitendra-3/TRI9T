@@ -15,7 +15,7 @@ router = APIRouter(tags=["Generation"])
 def generate_test_cases(
     selection_id: int,
     force: bool = Query(False, description="Force LLM regeneration, bypassing cache"),
-    model_name: str = Query("gemini-1.5-flash", description="Gemini model name to use"),
+    model_name: str = Query("gemini-3.1-flash-lite", description="Gemini model name to use"),
     db: Session = Depends(get_db)
 ):
     """
