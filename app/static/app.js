@@ -24,15 +24,29 @@ function toggleTheme() {
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
-function openIngestModal() {
-    document.getElementById("ingest-modal").style.display = "flex";
-    switchIngestMode(true);
-    populateIngestDocSelect();
+function openUploadDocModal() {
+    document.getElementById("upload-doc-modal").style.display = "flex";
+    document.getElementById("upload-doc-name").value = "CardioTrack CT-200";
+    document.getElementById("upload-doc-ver-label").value = "v1";
+    document.getElementById("upload-doc-file").value = "";
+    document.getElementById("upload-doc-content").value = "";
 }
-function closeIngestModal() {
-    document.getElementById("ingest-modal").style.display = "none";
+function closeUploadDocModal() {
+    document.getElementById("upload-doc-modal").style.display = "none";
+}
+
+async function openUploadVersionModal() {
+    document.getElementById("upload-version-modal").style.display = "flex";
+    document.getElementById("upload-ver-label").value = "";
+    document.getElementById("upload-ver-file").value = "";
+    document.getElementById("upload-ver-content").value = "";
+    await populateUploadVerDocSelect();
+}
+function closeUploadVersionModal() {
+    document.getElementById("upload-version-modal").style.display = "none";
     cancelIngestMismatch();
 }
+
 function openCreateSelectionModal() {
     if (!document.querySelectorAll(".tree-node-checkbox:checked").length) {
         alert("Please check at least one section in the Document Structure tree first.");
@@ -42,33 +56,13 @@ function openCreateSelectionModal() {
 }
 function closeCreateSelectionModal() { document.getElementById("selection-modal").style.display = "none"; }
 
-// ─── Ingest Mode Toggles & Populators ──────────────────────────────────────────
-function switchIngestMode(isNewDoc) {
-    ingestIsNewDoc = isNewDoc;
-    const btnNew = document.getElementById("btn-mode-new-doc");
-    const btnVer = document.getElementById("btn-mode-new-ver");
-    const groupName = document.getElementById("ingest-doc-name-group");
-    const groupSelect = document.getElementById("ingest-doc-select-group");
-    
-    if (isNewDoc) {
-        btnNew.className = "btn btn-primary btn-sm";
-        btnVer.className = "btn btn-secondary btn-sm";
-        groupName.style.display = "block";
-        groupSelect.style.display = "none";
-    } else {
-        btnNew.className = "btn btn-secondary btn-sm";
-        btnVer.className = "btn btn-primary btn-sm";
-        groupName.style.display = "none";
-        groupSelect.style.display = "block";
-    }
-}
-
-async function populateIngestDocSelect() {
+// ─── Populators & File Handlers ────────────────────────────────────────────────
+async function populateUploadVerDocSelect() {
     try {
         const r = await fetch("/api/documents");
         if (!r.ok) return;
         const docs = await r.json();
-        const select = document.getElementById("ingest-doc-select");
+        const select = document.getElementById("upload-ver-doc-select");
         if (!select) return;
         select.innerHTML = "";
         
@@ -83,9 +77,69 @@ async function populateIngestDocSelect() {
             opt.textContent = d.name;
             select.appendChild(opt);
         });
+        
+        if (currentDocId) {
+            select.value = currentDocId;
+            await suggestNextVersionLabel(currentDocId);
+        }
+        
+        select.onchange = async () => {
+            if (select.value) {
+                await suggestNextVersionLabel(parseInt(select.value));
+            }
+        };
     } catch (err) {
         console.error(err);
     }
+}
+
+async function suggestNextVersionLabel(docId) {
+    try {
+        const r = await fetch(`/api/documents/${docId}/versions`);
+        if (!r.ok) return;
+        const versions = await r.json();
+        const input = document.getElementById("upload-ver-label");
+        if (!input) return;
+        
+        if (versions.length === 0) {
+            input.value = "v1";
+            return;
+        }
+        
+        versions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const latest = versions[0].version_label;
+        const match = latest.match(/v(\d+)/i);
+        if (match) {
+            const nextNum = parseInt(match[1]) + 1;
+            input.value = `v${nextNum}`;
+        } else {
+            input.value = latest + "_new";
+        }
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+function handleDocFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById("upload-doc-content").value = e.target.result;
+    };
+    reader.readAsText(file);
+}
+
+function handleVerFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById("upload-ver-content").value = e.target.result;
+        const m = file.name.toLowerCase().match(/_(v\d+)/) || file.name.toLowerCase().match(/-(v\d+)/);
+        if (m) document.getElementById("upload-ver-label").value = m[1];
+    };
+    reader.readAsText(file);
 }
 
 function cancelIngestMismatch() {
@@ -97,77 +151,62 @@ async function proceedIngestMismatch() {
     if (!pendingIngestPayload) return;
     pendingIngestPayload.force = true;
     document.getElementById("confirm-mismatch-modal").style.display = "none";
-    await executeIngestion(pendingIngestPayload);
+    await executeIngestion(pendingIngestPayload, "version");
 }
 
-// ─── File Upload ──────────────────────────────────────────────────────────────
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-        document.getElementById("ingest-content").value = e.target.result;
-        const m = file.name.toLowerCase().match(/_(v\d+)/) || file.name.toLowerCase().match(/-(v\d+)/);
-        if (m) document.getElementById("ingest-ver-label").value = m[1];
-    };
-    reader.readAsText(file);
-}
-
-// ─── Load Preset ──────────────────────────────────────────────────────────────
-async function loadPresetFile(filename, verLabel) {
-    try {
-        const r = await fetch(`/api/documents/presets/${filename}`);
-        if (!r.ok) throw new Error("Failed to load preset");
-        const d = await r.json();
-        document.getElementById("ingest-ver-label").value = verLabel;
-        document.getElementById("ingest-content").value = d.content;
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-}
-
-// ─── Ingest ───────────────────────────────────────────────────────────────────
-async function submitIngestion() {
-    let docName = "";
-    let docId = null;
+// ─── Submissions ─────────────────────────────────────────────────────────────
+async function submitUploadDoc() {
+    const docName = document.getElementById("upload-doc-name").value.trim();
+    const verLabel = document.getElementById("upload-doc-ver-label").value.trim();
+    const content = document.getElementById("upload-doc-content").value;
     
-    if (ingestIsNewDoc) {
-        docName = document.getElementById("ingest-doc-name").value.trim();
-        if (!docName) {
-            alert("Please enter a document name.");
-            return;
-        }
-    } else {
-        const select = document.getElementById("ingest-doc-select");
-        if (!select || !select.value) {
-            alert("Please select a target document.");
-            return;
-        }
-        docId = parseInt(select.value);
-        docName = select.options[select.selectedIndex].textContent;
-    }
-    
-    const verLabel = document.getElementById("ingest-ver-label").value.trim();
-    const content  = document.getElementById("ingest-content").value;
-
-    if (!verLabel || !content) {
+    if (!docName || !verLabel || !content) {
         alert("Please fill in all fields.");
         return;
     }
-
+    
     const payload = {
         document_name: docName,
         version_label: verLabel,
         markdown_content: content,
         force: false,
-        is_new_document: ingestIsNewDoc,
+        is_new_document: true,
+        document_id: null
+    };
+    
+    await executeIngestion(payload, "doc");
+}
+
+async function submitUploadVersion() {
+    const select = document.getElementById("upload-ver-doc-select");
+    if (!select || !select.value) {
+        alert("Please select a target document.");
+        return;
+    }
+    
+    const docId = parseInt(select.value);
+    const docName = select.options[select.selectedIndex].textContent;
+    const verLabel = document.getElementById("upload-ver-label").value.trim();
+    const content = document.getElementById("upload-ver-content").value;
+    
+    if (!verLabel || !content) {
+        alert("Please fill in all fields.");
+        return;
+    }
+    
+    const payload = {
+        document_name: docName,
+        version_label: verLabel,
+        markdown_content: content,
+        force: false,
+        is_new_document: false,
         document_id: docId
     };
     
-    await executeIngestion(payload);
+    await executeIngestion(payload, "version");
 }
 
-async function executeIngestion(payload) {
+async function executeIngestion(payload, modalType) {
     try {
         const r = await fetch("/api/documents/ingest", {
             method:  "POST",
@@ -186,7 +225,13 @@ async function executeIngestion(payload) {
         }
         
         alert(`✓ "${payload.version_label}" ingested.\nTotal: ${result.stats.total_nodes} | New: ${result.stats.new_nodes} | Modified: ${result.stats.modified_nodes}`);
-        closeIngestModal();
+        
+        if (modalType === "doc") {
+            closeUploadDocModal();
+        } else {
+            closeUploadVersionModal();
+        }
+        
         await loadDocuments(result.version.document_id, result.version.id);
     } catch (err) {
         alert("Ingest Error: " + err.message);
@@ -733,7 +778,26 @@ async function loadTestCases(selId) {
                 </button>
             `;
         } else {
-            staleness.style.display = "none";
+            staleness.style.display = "block";
+            const selNodeCount = document.getElementById("sel-node-count")?.textContent || "0";
+            
+            document.getElementById("staleness-body").innerHTML = `
+                <div class="stale-banner" style="background:#ecfdf5; border-color:#a7f3d0; color:#065f46;">
+                    <div class="stale-banner-title" style="color:#059669; font-weight:600; display:flex; align-items:center; gap:6px;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                        Test cases are UP TO DATE.
+                    </div>
+                    <div class="stale-banner-subtitle" style="color:#065f46; font-size:11px; padding-left:20px; font-weight:500;">All selected sections match the active manual version.</div>
+                </div>
+
+                <div style="font-size:11px;font-weight:700;margin-bottom:8px;">Impact Summary</div>
+                <table class="meta-table">
+                    <tr><td>Total Sections in Selection</td><td>${selNodeCount}</td></tr>
+                    <tr><td>Changed Sections</td><td style="color:var(--orange);font-weight:700;">0</td></tr>
+                    <tr><td>Unchanged Sections</td><td style="color:var(--green);font-weight:700;">${selNodeCount}</td></tr>
+                    <tr><td>Overall Status</td><td><span class="badge badge-green">CURRENT</span></td></tr>
+                </table>
+            `;
         }
 
     } catch (err) {

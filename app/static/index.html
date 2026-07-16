@@ -26,29 +26,13 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
                 Dashboard
             </a>
-            <a href="#" class="menu-item" onclick="openIngestModal(); return false;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Ingest Version
+            <a href="#" class="menu-item" onclick="openUploadDocModal(); return false;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                Upload Document
             </a>
-        </ul>
-
-        <div class="sidebar-section-label">Analysis</div>
-        <ul class="sidebar-menu">
-            <a href="#" class="menu-item" onclick="document.getElementById('tree-search').focus(); return false;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                Search Sections
-            </a>
-            <a href="#" class="menu-item" onclick="document.getElementById('selection-selector').focus(); return false;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                Selections
-            </a>
-            <a href="#" class="menu-item" onclick="document.getElementById('btn-generate-tc').click(); return false;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                Generate Test Cases
-            </a>
-            <a href="#" class="menu-item" onclick="document.getElementById('staleness-card').scrollIntoView({behavior:'smooth'}); return false;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                Staleness / Impact
+            <a href="#" class="menu-item" onclick="openUploadVersionModal(); return false;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Upload Updated Version
             </a>
         </ul>
 
@@ -271,76 +255,86 @@
         </div>
     </div>
 
-    <!-- Ingest Modal -->
-    <div class="modal-overlay" id="ingest-modal">
+    <!-- Upload Document Modal -->
+    <div class="modal-overlay" id="upload-doc-modal">
         <div class="modal">
             <div class="modal-header">
-                <span>Ingest Document Version</span>
-                <button class="modal-close" onclick="closeIngestModal()">&times;</button>
+                <span>📁 Upload New Document</span>
+                <button class="modal-close" onclick="closeUploadDocModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <!-- Toggle Mode buttons -->
                 <div class="form-group">
-                    <label class="form-label">Ingest Mode</label>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn btn-primary btn-sm" id="btn-mode-new-doc" onclick="switchIngestMode(true)" type="button">Upload Document</button>
-                        <button class="btn btn-secondary btn-sm" id="btn-mode-new-ver" onclick="switchIngestMode(false)" type="button">Upload New Version</button>
-                    </div>
-                </div>
-                
-                <!-- Group for New Document -->
-                <div class="form-group" id="ingest-doc-name-group">
                     <label class="form-label">Document Name</label>
-                    <input type="text" id="ingest-doc-name" value="CardioTrack CT-200">
+                    <input type="text" id="upload-doc-name" value="CardioTrack CT-200">
                 </div>
-                
-                <!-- Group for New Version -->
-                <div class="form-group" id="ingest-doc-select-group" style="display:none;">
-                    <label class="form-label">Select Target Document</label>
-                    <select id="ingest-doc-select" style="width:100%;">
-                        <!-- Populated dynamically with current documents -->
-                    </select>
-                </div>
-                
                 <div class="form-group">
                     <label class="form-label">Version Label</label>
-                    <input type="text" id="ingest-ver-label" placeholder="e.g. v1, v2">
+                    <input type="text" id="upload-doc-ver-label" value="v1">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Upload Markdown File</label>
-                    <input type="file" id="ingest-file" accept=".md,.txt" onchange="handleFileUpload(this)" style="font-size:12px;">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Or load a preset:</label>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn btn-secondary btn-sm" onclick="loadPresetFile('ct200_manual.md', 'v1')">Load Manual V1</button>
-                        <button class="btn btn-secondary btn-sm" onclick="loadPresetFile('ct200_manual_v2.md', 'v2')">Load Manual V2</button>
-                    </div>
+                    <label class="form-label">Select Markdown File</label>
+                    <input type="file" id="upload-doc-file" accept=".md,.txt" onchange="handleDocFileUpload(this)" style="font-size:12px;">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Markdown Content</label>
-                    <textarea id="ingest-content" rows="9" placeholder="Paste or upload markdown file content…"></textarea>
+                    <textarea id="upload-doc-content" rows="10" placeholder="Paste or select a file to load content…"></textarea>
                 </div>
             </div>
-            <div class="modal-overlay" id="confirm-mismatch-modal" style="display:none; position:absolute; background:rgba(0,0,0,0.85); inset:0; align-items:center; justify-content:center; z-index:1100; border-radius:8px;">
-                <div style="background:var(--card); border:1px solid var(--border); padding:20px; border-radius:8px; width:90%; max-width:400px; box-shadow:var(--shadow);">
-                    <div style="color:var(--orange); font-weight:700; font-size:14px; display:flex; align-items:center; gap:6px; margin-bottom:10px;">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        Massive Restructuring Warning
-                    </div>
-                    <div style="font-size:12px; line-height:1.6; color:var(--text-1); margin-bottom:16px;">
-                        The uploaded document has a <strong style="color:var(--red);" id="mismatch-percent-lbl">0%</strong> mismatch compared to the previous version. This is more than the 70% limit.
-                        Do you want to proceed and ingest this anyway?
-                    </div>
-                    <div style="display:flex; justify-content:flex-end; gap:8px;">
-                        <button class="btn btn-secondary btn-sm" onclick="cancelIngestMismatch()">Cancel</button>
-                        <button class="btn btn-primary btn-sm" onclick="proceedIngestMismatch()" style="background:var(--orange); border-color:var(--orange);">Force Ingest</button>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" onclick="closeUploadDocModal()">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="submitUploadDoc()">Upload Document</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Updated Version Modal -->
+    <div class="modal-overlay" id="upload-version-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>🔄 Upload Updated Version</span>
+                <button class="modal-close" onclick="closeUploadVersionModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="position:relative;">
+                <div class="form-group">
+                    <label class="form-label">Select Document to Update</label>
+                    <select id="upload-ver-doc-select" style="width:100%;">
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">New Version Label</label>
+                    <input type="text" id="upload-ver-label" placeholder="e.g. v2, v3">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Select Markdown File</label>
+                    <input type="file" id="upload-ver-file" accept=".md,.txt" onchange="handleVerFileUpload(this)" style="font-size:12px;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Markdown Content</label>
+                    <textarea id="upload-ver-content" rows="10" placeholder="Paste or select a file to load content…"></textarea>
+                </div>
+                
+                <!-- Confirm Mismatch overlay inside this modal -->
+                <div class="modal-overlay" id="confirm-mismatch-modal" style="display:none; position:absolute; background:rgba(0,0,0,0.85); inset:0; align-items:center; justify-content:center; z-index:1100; border-radius:8px;">
+                    <div style="background:var(--card); border:1px solid var(--border); padding:20px; border-radius:8px; width:90%; max-width:350px; box-shadow:var(--shadow);">
+                        <div style="color:var(--orange); font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px; margin-bottom:10px;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            Restructuring Warning
+                        </div>
+                        <div style="font-size:11.5px; line-height:1.5; color:var(--text-1); margin-bottom:16px;">
+                            The uploaded document has a <strong style="color:var(--red);" id="mismatch-percent-lbl">0%</strong> mismatch compared to the previous version. This exceeds the 70% threshold.
+                            Proceed with ingestion anyway?
+                        </div>
+                        <div style="display:flex; justify-content:flex-end; gap:8px;">
+                            <button class="btn btn-secondary btn-sm" onclick="cancelIngestMismatch()">Cancel</button>
+                            <button class="btn btn-primary btn-sm" onclick="proceedIngestMismatch()" style="background:var(--orange); border-color:var(--orange);">Force Ingest</button>
+                        </div>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary btn-sm" onclick="closeIngestModal()">Cancel</button>
-                <button class="btn btn-primary btn-sm" onclick="submitIngestion()">Ingest Document</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeUploadVersionModal()">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="submitUploadVersion()">Upload Version</button>
             </div>
         </div>
     </div>
