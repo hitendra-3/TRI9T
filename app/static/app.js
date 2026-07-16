@@ -1,150 +1,79 @@
-// State Management
-let currentDocId = null;
-let currentVerId = null;
-let activeNodeId = null;
+// ─── State ───────────────────────────────────────────────────────────────────
+let currentDocId     = null;
+let currentVerId     = null;
+let activeNodeId     = null;
 let activeSelectionId = null;
-let selectedNodeIds = new Set();
-let nodesMap = new Map(); // Store nodes by ID for quick access
+let selectedNodeIds  = new Set();
+let nodesMap         = new Map();
+let ingestIsNewDoc   = true;
+let pendingIngestPayload = null;
 
-// On Load
+// ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-    // Check local storage for theme
-    const savedTheme = localStorage.getItem("theme") || "light";
-    document.documentElement.setAttribute("data-theme", savedTheme);
-    
-    // Load initial documents
+    const saved = localStorage.getItem("theme") || "light";
+    document.documentElement.setAttribute("data-theme", saved);
     loadDocuments();
 });
 
-// Theme Toggle
+// ─── Theme ────────────────────────────────────────────────────────────────────
 function toggleTheme() {
-    const currentTheme = document.documentElement.getAttribute("data-theme");
-    const newTheme = currentTheme === "dark" ? "light" : "dark";
-    document.documentElement.setAttribute("data-theme", newTheme);
-    localStorage.setItem("theme", newTheme);
+    const cur = document.documentElement.getAttribute("data-theme");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("theme", next);
 }
 
-// Tab Switcher for Test Cases panel
-function switchTab(tabId) {
-    // Update button states
-    document.querySelectorAll(".tab-btn").forEach(btn => {
-        btn.classList.toggle("active", btn.getAttribute("onclick") === `switchTab('${tabId}')`);
-    });
-    // Update content visibility
-    document.querySelectorAll(".tab-content").forEach(el => {
-        el.classList.toggle("active", el.id === tabId);
-    });
-}
-
-// Ingestion Modal Controls
+// ─── Modals ───────────────────────────────────────────────────────────────────
 function openIngestModal() {
     document.getElementById("ingest-modal").style.display = "flex";
+    switchIngestMode(true);
+    populateIngestDocSelect();
 }
-
 function closeIngestModal() {
     document.getElementById("ingest-modal").style.display = "none";
+    cancelIngestMismatch();
 }
-
-// Create Selection Modal Controls
 function openCreateSelectionModal() {
-    // Gather all checked checkboxes
-    const checkedBoxes = document.querySelectorAll(".tree-node-checkbox:checked");
-    if (checkedBoxes.length === 0) {
-        alert("Please select at least one checkbox in the Document Structure tree first!");
+    if (!document.querySelectorAll(".tree-node-checkbox:checked").length) {
+        alert("Please check at least one section in the Document Structure tree first.");
         return;
     }
     document.getElementById("selection-modal").style.display = "flex";
 }
+function closeCreateSelectionModal() { document.getElementById("selection-modal").style.display = "none"; }
 
-function closeCreateSelectionModal() {
-    document.getElementById("selection-modal").style.display = "none";
-}
-
-// Load Preset File from Backend
-async function loadPresetFile(filename, verLabel) {
-    try {
-        const response = await fetch(`/api/documents/presets/${filename}`);
-        if (!response.ok) throw new Error("Failed to load preset file");
-        const data = await response.json();
-        
-        document.getElementById("ingest-ver-label").value = verLabel;
-        document.getElementById("ingest-content").value = data.content;
-    } catch (err) {
-        alert("Error loading preset: " + err.message);
+// ─── Ingest Mode Toggles & Populators ──────────────────────────────────────────
+function switchIngestMode(isNewDoc) {
+    ingestIsNewDoc = isNewDoc;
+    const btnNew = document.getElementById("btn-mode-new-doc");
+    const btnVer = document.getElementById("btn-mode-new-ver");
+    const groupName = document.getElementById("ingest-doc-name-group");
+    const groupSelect = document.getElementById("ingest-doc-select-group");
+    
+    if (isNewDoc) {
+        btnNew.className = "btn btn-primary btn-sm";
+        btnVer.className = "btn btn-secondary btn-sm";
+        groupName.style.display = "block";
+        groupSelect.style.display = "none";
+    } else {
+        btnNew.className = "btn btn-secondary btn-sm";
+        btnVer.className = "btn btn-primary btn-sm";
+        groupName.style.display = "none";
+        groupSelect.style.display = "block";
     }
 }
 
-// Handle custom file upload and read content
-function handleFileUpload(input) {
-    const file = input.files[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        document.getElementById("ingest-content").value = e.target.result;
-        
-        // Auto-detect version label from filename (e.g. "ct200_manual_v2.md" -> "v2")
-        const name = file.name.toLowerCase();
-        const match = name.match(/_(v\d+)/) || name.match(/-(v\d+)/) || name.match(/^(v\d+)/);
-        if (match) {
-            document.getElementById("ingest-ver-label").value = match[1];
-        }
-    };
-    reader.readAsText(file);
-}
-
-// Submit Ingestion to Backend
-async function submitIngestion() {
-    const docName = document.getElementById("ingest-doc-name").value.strip ? document.getElementById("ingest-doc-name").value.strip() : document.getElementById("ingest-doc-name").value;
-    const verLabel = document.getElementById("ingest-ver-label").value.strip ? document.getElementById("ingest-ver-label").value.strip() : document.getElementById("ingest-ver-label").value;
-    const content = document.getElementById("ingest-content").value;
-    
-    if (!docName || !verLabel || !content) {
-        alert("Please fill in all fields before submitting!");
-        return;
-    }
-    
+async function populateIngestDocSelect() {
     try {
-        const response = await fetch("/api/documents/ingest", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                document_name: docName,
-                version_label: verLabel,
-                markdown_content: content
-            })
-        });
-        
-        if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.detail || "Ingestion failed");
-        }
-        
-        const result = await response.json();
-        alert(`Version ${verLabel} ingested successfully!\nTotal Nodes: ${result.stats.total_nodes}\nNew: ${result.stats.new_nodes}\nModified: ${result.stats.modified_nodes}\nDeleted: ${result.stats.deleted_nodes}`);
-        
-        closeIngestModal();
-        
-        // Reload documents and select the newly created version
-        await loadDocuments(result.version.document_id, result.version.id);
-        
-    } catch (err) {
-        alert("Ingestion Error: " + err.message);
-    }
-}
-
-// Fetch and load documents
-async function loadDocuments(selectDocId = null, selectVerId = null) {
-    try {
-        const response = await fetch("/api/documents");
-        if (!response.ok) throw new Error("Failed to load documents");
-        const docs = await response.json();
-        
-        const selector = document.getElementById("doc-selector");
-        selector.innerHTML = "";
+        const r = await fetch("/api/documents");
+        if (!r.ok) return;
+        const docs = await r.json();
+        const select = document.getElementById("ingest-doc-select");
+        if (!select) return;
+        select.innerHTML = "";
         
         if (docs.length === 0) {
-            selector.innerHTML = '<option value="">-- No Documents --</option>';
+            select.innerHTML = '<option value="">-- No Documents Available --</option>';
             return;
         }
         
@@ -152,850 +81,783 @@ async function loadDocuments(selectDocId = null, selectVerId = null) {
             const opt = document.createElement("option");
             opt.value = d.id;
             opt.textContent = d.name;
-            selector.appendChild(opt);
+            select.appendChild(opt);
         });
-        
-        // Auto select first document or specified one
-        const activeDoc = selectDocId || docs[0].id;
-        selector.value = activeDoc;
-        currentDocId = parseInt(activeDoc);
-        
-        await loadDocumentVersions(currentDocId, selectVerId);
-        
     } catch (err) {
         console.error(err);
     }
 }
 
-// Fetch and load versions
-async function loadDocumentVersions(docId, selectVerId = null) {
-    if (!docId) return;
-    currentDocId = parseInt(docId);
-    
+function cancelIngestMismatch() {
+    document.getElementById("confirm-mismatch-modal").style.display = "none";
+    pendingIngestPayload = null;
+}
+
+async function proceedIngestMismatch() {
+    if (!pendingIngestPayload) return;
+    pendingIngestPayload.force = true;
+    document.getElementById("confirm-mismatch-modal").style.display = "none";
+    await executeIngestion(pendingIngestPayload);
+}
+
+// ─── File Upload ──────────────────────────────────────────────────────────────
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        document.getElementById("ingest-content").value = e.target.result;
+        const m = file.name.toLowerCase().match(/_(v\d+)/) || file.name.toLowerCase().match(/-(v\d+)/);
+        if (m) document.getElementById("ingest-ver-label").value = m[1];
+    };
+    reader.readAsText(file);
+}
+
+// ─── Load Preset ──────────────────────────────────────────────────────────────
+async function loadPresetFile(filename, verLabel) {
     try {
-        const response = await fetch(`/api/documents/${docId}/versions`);
-        if (!response.ok) throw new Error("Failed to load versions");
-        const versions = await response.json();
+        const r = await fetch(`/api/documents/presets/${filename}`);
+        if (!r.ok) throw new Error("Failed to load preset");
+        const d = await r.json();
+        document.getElementById("ingest-ver-label").value = verLabel;
+        document.getElementById("ingest-content").value = d.content;
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+// ─── Ingest ───────────────────────────────────────────────────────────────────
+async function submitIngestion() {
+    let docName = "";
+    let docId = null;
+    
+    if (ingestIsNewDoc) {
+        docName = document.getElementById("ingest-doc-name").value.trim();
+        if (!docName) {
+            alert("Please enter a document name.");
+            return;
+        }
+    } else {
+        const select = document.getElementById("ingest-doc-select");
+        if (!select || !select.value) {
+            alert("Please select a target document.");
+            return;
+        }
+        docId = parseInt(select.value);
+        docName = select.options[select.selectedIndex].textContent;
+    }
+    
+    const verLabel = document.getElementById("ingest-ver-label").value.trim();
+    const content  = document.getElementById("ingest-content").value;
+
+    if (!verLabel || !content) {
+        alert("Please fill in all fields.");
+        return;
+    }
+
+    const payload = {
+        document_name: docName,
+        version_label: verLabel,
+        markdown_content: content,
+        force: false,
+        is_new_document: ingestIsNewDoc,
+        document_id: docId
+    };
+    
+    await executeIngestion(payload);
+}
+
+async function executeIngestion(payload) {
+    try {
+        const r = await fetch("/api/documents/ingest", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(payload)
+        });
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || "Ingest failed"); }
+
+        const result = await r.json();
         
-        const selector = document.getElementById("ver-selector");
-        selector.innerHTML = "";
-        
-        if (versions.length === 0) {
-            selector.innerHTML = '<option value="">-- No Versions --</option>';
+        if (result.status === "warning") {
+            pendingIngestPayload = payload;
+            document.getElementById("mismatch-percent-lbl").textContent = `${result.mismatch_percent}%`;
+            document.getElementById("confirm-mismatch-modal").style.display = "flex";
             return;
         }
         
-        // Sort versions descending (newest first)
-        versions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        
-        versions.forEach((v, index) => {
-            const opt = document.createElement("option");
-            opt.value = v.id;
-            opt.textContent = v.version_label + (index === 0 ? " (Latest)" : "");
-            selector.appendChild(opt);
-        });
-        
-        // Auto select first (newest) or specified version
-        const activeVer = selectVerId || versions[0].id;
-        selector.value = activeVer;
-        currentVerId = parseInt(activeVer);
-        
-        await loadVersionDetails(currentVerId);
-        
+        alert(`✓ "${payload.version_label}" ingested.\nTotal: ${result.stats.total_nodes} | New: ${result.stats.new_nodes} | Modified: ${result.stats.modified_nodes}`);
+        closeIngestModal();
+        await loadDocuments(result.version.document_id, result.version.id);
     } catch (err) {
-        console.error(err);
+        alert("Ingest Error: " + err.message);
     }
 }
 
-// Fetch all details for a version (nodes, stats, selections)
+// ─── Documents ────────────────────────────────────────────────────────────────
+async function loadDocuments(selectDocId = null, selectVerId = null) {
+    try {
+        const r = await fetch("/api/documents");
+        if (!r.ok) throw new Error("Failed to load documents");
+        const docs = await r.json();
+
+        const sel = document.getElementById("doc-selector");
+        sel.innerHTML = "";
+
+        if (!docs.length) {
+            sel.innerHTML = '<option value="">— No Documents —</option>';
+            return;
+        }
+
+        docs.forEach(d => {
+            const o = document.createElement("option");
+            o.value = d.id; o.textContent = d.name;
+            sel.appendChild(o);
+        });
+
+        const active = selectDocId || docs[0].id;
+        sel.value = active;
+        currentDocId = parseInt(active);
+        await loadDocumentVersions(currentDocId, selectVerId);
+    } catch (err) { console.error(err); }
+}
+
+// ─── Versions ─────────────────────────────────────────────────────────────────
+async function loadDocumentVersions(docId, selectVerId = null) {
+    if (!docId) return;
+    currentDocId = parseInt(docId);
+
+    try {
+        const r = await fetch(`/api/documents/${docId}/versions`);
+        if (!r.ok) throw new Error("Failed to load versions");
+        const versions = await r.json();
+
+        const sel = document.getElementById("ver-selector");
+        sel.innerHTML = "";
+
+        if (!versions.length) {
+            sel.innerHTML = '<option value="">— No Versions —</option>';
+            return;
+        }
+
+        versions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        versions.forEach((v, i) => {
+            const o = document.createElement("option");
+            o.value = v.id;
+            o.textContent = v.version_label + (i === 0 ? " (Latest)" : "");
+            sel.appendChild(o);
+        });
+
+        const active = selectVerId || versions[0].id;
+        sel.value = active;
+        currentVerId = parseInt(active);
+        await loadVersionDetails(currentVerId);
+    } catch (err) { console.error(err); }
+}
+
+// ─── Version Details ──────────────────────────────────────────────────────────
 async function loadVersionDetails(verId) {
     if (!verId) return;
     currentVerId = parseInt(verId);
 
     try {
-        // 1. Build document tree (lazy-loaded top-level nodes)
-        const nodesResponse = await fetch(`/api/nodes/browse?document_id=${currentDocId}&version_id=${currentVerId}`);
-        if (!nodesResponse.ok) throw new Error("Failed to load nodes");
-        const topNodes = await nodesResponse.json();
+        // 1. Top-level tree nodes
+        const nr = await fetch(`/api/nodes/browse?document_id=${currentDocId}&version_id=${currentVerId}`);
+        if (!nr.ok) throw new Error("Failed to load nodes");
+        const topNodes = await nr.json();
 
         nodesMap.clear();
         const treeRoot = document.getElementById("tree-root");
         treeRoot.innerHTML = "";
 
-        if (topNodes.length === 0) {
-            treeRoot.innerHTML = '<div style="font-size:12.5px; text-align:center; padding:24px; color:var(--text-secondary);">No sections found in this version.</div>';
-            return;
-        }
-
-        topNodes.forEach(node => {
-            nodesMap.set(node.id, node);
-            treeRoot.appendChild(createTreeNodeElement(node));
-        });
-
-        // 2. Fetch version metadata for sidebar
-        const verResponse = await fetch(`/api/versions/${currentVerId}`);
-        if (verResponse.ok) {
-            const verData = await verResponse.json();
-            document.getElementById("side-ver-label").textContent = verData.version_label;
-            document.getElementById("side-ver-date").textContent = new Date(verData.created_at).toLocaleDateString();
-        }
-
-        // 3. Fetch all nodes (wildcard search) for total count + enriched map
-        const allNodesResponse = await fetch(`/api/nodes/search?document_id=${currentDocId}&query=%25&version_id=${currentVerId}`);
-        if (allNodesResponse.ok) {
-            const allNodes = await allNodesResponse.json();
-            document.getElementById("side-ver-nodes").textContent = allNodes.length;
-            document.getElementById("stat-total-sections").textContent = allNodes.length;
-            allNodes.forEach(n => nodesMap.set(n.id, n));
-        }
-
-        // 4. Fetch dynamic version stats (new / modified / deleted nodes)
-        const statsResponse = await fetch(`/api/versions/${currentVerId}/stats`);
-        if (statsResponse.ok) {
-            const stats = await statsResponse.json();
-            document.getElementById("stat-new-sections").textContent = stats.new_nodes;
-            document.getElementById("stat-modified-sections").textContent = stats.modified_nodes;
+        if (!topNodes.length) {
+            treeRoot.innerHTML = '<div class="empty-state">No sections found in this version.</div>';
         } else {
-            document.getElementById("stat-new-sections").textContent = "0";
-            document.getElementById("stat-modified-sections").textContent = "0";
+            topNodes.forEach(n => { nodesMap.set(n.id, n); treeRoot.appendChild(createTreeNode(n)); });
         }
 
-        // 5. Load selections dropdown + total selections stat
+        // 2. Version metadata for sidebar
+        const vr = await fetch(`/api/versions/${currentVerId}`);
+        if (vr.ok) {
+            const vd = await vr.json();
+            document.getElementById("side-ver-label").textContent = vd.version_label;
+            document.getElementById("side-ver-date").textContent   = new Date(vd.created_at).toLocaleDateString();
+            const badge = document.getElementById("ver-badge-tree");
+            if (badge) badge.textContent = vd.version_label;
+        }
+
+        // 3. All nodes (wildcard) for counts + map enrichment
+        const ar = await fetch(`/api/nodes/search?document_id=${currentDocId}&query=%25&version_id=${currentVerId}`);
+        if (ar.ok) {
+            const all = await ar.json();
+            setText("side-ver-nodes",       all.length);
+            setText("stat-total-sections",  all.length);
+            all.forEach(n => nodesMap.set(n.id, n));
+        }
+
+        // 4. Dynamic stats
+        const sr = await fetch(`/api/versions/${currentVerId}/stats`);
+        if (sr.ok) {
+            const s = await sr.json();
+            setText("stat-new-sections",      s.new_nodes);
+            setText("stat-modified-sections", s.modified_nodes);
+            setText("side-ver-changed",       s.modified_nodes);
+            setText("side-ver-new",           s.new_nodes);
+        } else {
+            ["stat-new-sections","stat-modified-sections","side-ver-changed","side-ver-new"].forEach(id => setText(id, "0"));
+        }
+
+        // 5. Selections
         await loadSelectionsList();
 
-        // 6. Load total generation count stat
+        // 6. Total generations count
         await loadTotalGenerations();
 
-    } catch (err) {
-        console.error(err);
-    }
+    } catch (err) { console.error(err); }
 }
 
-// Count total generated test case sets across all selections
+function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+}
+
+// ─── Generation Count ─────────────────────────────────────────────────────────
 async function loadTotalGenerations() {
     try {
-        const response = await fetch("/api/selections");
-        if (!response.ok) return;
-        const selections = await response.json();
-
+        const r = await fetch("/api/selections");
+        if (!r.ok) return;
+        const sels = await r.json();
         let total = 0;
-        await Promise.all(selections.map(async sel => {
-            const r = await fetch(`/api/selections/${sel.id}/test-cases`);
-            if (r.ok) total++;
+        await Promise.all(sels.map(async s => {
+            const x = await fetch(`/api/selections/${s.id}/test-cases`);
+            if (x.ok) total++;
         }));
-
-        document.getElementById("stat-total-generations").textContent = total;
-    } catch (err) {
-        console.error(err);
-    }
+        setText("stat-total-generations", total);
+    } catch (err) { console.error(err); }
 }
 
-// Create a collapsible tree node element
-function createTreeNodeElement(node) {
-    const container = document.createElement("div");
-    container.className = "tree-node";
-    container.id = `node-container-${node.id}`;
-    
-    const header = document.createElement("div");
-    header.className = "tree-node-header";
-    header.id = `node-header-${node.id}`;
-    header.onclick = (e) => {
-        // Prevent click if clicking checkbox
-        if (e.target.tagName === "INPUT") return;
-        selectNode(node.id);
-    };
-    
-    // Collapsible Arrow (only if it has children conceptually, e.g., level < 4 or we know it has kids)
+// ─── Tree Node Builder ────────────────────────────────────────────────────────
+function createTreeNode(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "tree-node";
+    wrap.id = `tc-${node.id}`;
+
+    const hdr = document.createElement("div");
+    hdr.className = "tree-node-header";
+    hdr.id = `th-${node.id}`;
+    hdr.onclick = e => { if (e.target.tagName !== "INPUT") selectNode(node.id); };
+
+    // Arrow
     const arrow = document.createElement("span");
     arrow.className = "tree-node-arrow";
-    arrow.textContent = "▶";
-    header.appendChild(arrow);
-    
-    // Checkbox for selections
+    arrow.innerHTML = "&#9654;";
+
+    // Checkbox
     const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "tree-node-checkbox";
-    cb.value = node.id;
-    cb.onclick = (e) => {
-        if (cb.checked) {
-            selectedNodeIds.add(node.id);
-        } else {
-            selectedNodeIds.delete(node.id);
-        }
-    };
-    header.appendChild(cb);
-    
-    // Icon
-    const icon = document.createElement("span");
-    icon.className = "tree-node-icon";
-    icon.textContent = getIconForLevel(node.level);
-    header.appendChild(icon);
-    
-    // Title
-    const titleText = document.createElement("span");
-    titleText.textContent = node.title;
-    header.appendChild(titleText);
-    
-    container.appendChild(header);
-    
+    cb.type = "checkbox"; cb.className = "tree-node-checkbox"; cb.value = node.id;
+    cb.onclick = e => { e.stopPropagation(); node.id && (cb.checked ? selectedNodeIds.add(node.id) : selectedNodeIds.delete(node.id)); };
+
+    // Label
+    const label = document.createElement("span");
+    label.className = "tree-node-label";
+    label.textContent = node.title;
+
+    hdr.append(arrow, cb, label);
+    wrap.appendChild(hdr);
+
     // Children container
-    const childrenContainer = document.createElement("div");
-    childrenContainer.className = "tree-node-children";
-    childrenContainer.id = `node-children-${node.id}`;
-    container.appendChild(childrenContainer);
-    
-    // Toggle expand/collapse
-    arrow.onclick = async (e) => {
+    const kids = document.createElement("div");
+    kids.className = "tree-node-children";
+    kids.id = `tk-${node.id}`;
+    wrap.appendChild(kids);
+
+    // Expand/collapse
+    arrow.onclick = async e => {
         e.stopPropagation();
-        const isExpanded = childrenContainer.classList.contains("expanded");
-        
-        if (isExpanded) {
-            childrenContainer.classList.remove("expanded");
-            arrow.classList.remove("expanded");
-        } else {
-            childrenContainer.classList.add("expanded");
-            arrow.classList.add("expanded");
-            
-            // Load children from backend if not already loaded
-            if (childrenContainer.children.length === 0) {
-                await loadChildren(node.id, childrenContainer);
-            }
-        }
+        const open = kids.classList.toggle("expanded");
+        arrow.classList.toggle("expanded", open);
+        if (open && !kids.children.length) await loadChildren(node.id, kids);
     };
-    
-    return container;
+
+    return wrap;
 }
 
-function getIconForLevel(level) {
-    switch (level) {
-        case 1: return "📁";
-        case 2: return "📖";
-        case 3: return "📄";
-        default: return "📝";
-    }
-}
-
-async function loadChildren(nodeId, containerElement) {
+// ─── Load Children ────────────────────────────────────────────────────────────
+async function loadChildren(nodeId, container) {
     try {
-        const response = await fetch(`/api/nodes/${nodeId}`);
-        if (!response.ok) throw new Error("Failed to load node details");
-        const nodeDetail = await response.json();
-        
-        if (nodeDetail.children.length === 0) {
-            // No children, hide the arrow
-            const header = document.getElementById(`node-header-${nodeId}`);
-            if (header) {
-                const arrow = header.querySelector(".tree-node-arrow");
-                if (arrow) arrow.style.visibility = "hidden";
-            }
+        const r = await fetch(`/api/nodes/${nodeId}`);
+        if (!r.ok) return;
+        const nd = await r.json();
+
+        if (!nd.children.length) {
+            const hdr = document.getElementById(`th-${nodeId}`);
+            if (hdr) hdr.querySelector(".tree-node-arrow").style.visibility = "hidden";
             return;
         }
-        
-        nodeDetail.children.forEach(child => {
-            nodesMap.set(child.id, child);
-            const childElement = createTreeNodeElement(child);
-            containerElement.appendChild(childElement);
-        });
-        
-    } catch (err) {
-        console.error(err);
-    }
+
+        nd.children.forEach(c => { nodesMap.set(c.id, c); container.appendChild(createTreeNode(c)); });
+    } catch (err) { console.error(err); }
 }
 
-// Select a node and display details in center pane
+// ─── Select Node ──────────────────────────────────────────────────────────────
 async function selectNode(nodeId) {
     activeNodeId = nodeId;
-    
-    // Highlight active node in tree
     document.querySelectorAll(".tree-node-header").forEach(h => h.classList.remove("selected"));
-    const activeHeader = document.getElementById(`node-header-${nodeId}`);
-    if (activeHeader) activeHeader.classList.add("selected");
-    
-    const detailBody = document.getElementById("section-detail-body");
-    detailBody.innerHTML = '<div style="text-align:center; padding: 20px;"><span class="loading-spinner"></span> Loading details...</div>';
-    
+    const hdr = document.getElementById(`th-${nodeId}`);
+    if (hdr) hdr.classList.add("selected");
+
+    const body = document.getElementById("section-detail-body");
+    body.innerHTML = `<div style="text-align:center;padding:24px;"><span class="spinner"></span></div>`;
+
     try {
-        const response = await fetch(`/api/nodes/${nodeId}`);
-        if (!response.ok) throw new Error("Failed to fetch node");
-        const node = await response.json();
-        
-        // Fetch diff summary comparison
-        const diffResponse = await fetch(`/api/nodes/${nodeId}/diff`);
+        const r   = await fetch(`/api/nodes/${nodeId}`);
+        if (!r.ok) throw new Error("Failed to fetch node");
+        const node = await r.json();
+
+        const dr   = await fetch(`/api/nodes/${nodeId}/diff`);
         let diffBadge = "";
         let diffBlock = "";
-        
-        if (diffResponse.ok) {
-            const diffData = await diffResponse.json();
-            if (diffData.has_changed) {
-                if (diffData.diff_type === "modified") {
-                    diffBadge = '<span class="badge yellow">CHANGED</span>';
-                    diffBlock = `
-                        <div class="control-label" style="margin-top:16px; margin-bottom:8px;">Changes in Latest Version:</div>
-                        <div class="diff-view">${formatDiffHtml(diffData.diff_text)}</div>
-                    `;
-                } else if (diffData.diff_type === "deleted") {
-                    diffBadge = '<span class="badge red">DELETED IN LATEST</span>';
+
+        if (dr.ok) {
+            const dd = await dr.json();
+            if (dd.has_changed) {
+                if (dd.diff_type === "modified") {
+                    diffBadge = `<span class="badge badge-yellow">CHANGED</span>`;
+                    diffBlock = `<div style="margin-top:12px;">
+                        <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;">Changes vs Latest Version</div>
+                        <div class="diff-view">${colorDiff(dd.diff_text)}</div>
+                    </div>`;
+                } else if (dd.diff_type === "deleted") {
+                    diffBadge = `<span class="badge badge-red">DELETED IN LATEST</span>`;
                 }
             } else {
-                diffBadge = '<span class="badge green">CURRENT</span>';
+                diffBadge = `<span class="badge badge-green">CURRENT</span>`;
             }
         }
-        
-        const parentPath = node.path.substring(0, node.path.lastIndexOf("/")) || "None (Root)";
-        const levelColors = ["", "blue", "green", "orange", "yellow"];
-        const levelColor = levelColors[node.level] || "blue";
 
-        detailBody.innerHTML = `
-            <div class="detail-header-row">
-                <h2 class="detail-title">${node.heading}</h2>
-                <button class="btn btn-secondary" style="font-size:11px; padding:4px 10px;" onclick="alert('Diff view is shown below if the section has changed.')">View Changes</button>
+        const levelBadge = ["","badge-blue","badge-green","badge-orange","badge-yellow"][node.level] || "badge-blue";
+        const parentPath = node.path.substring(0, node.path.lastIndexOf("/")) || "None (Root)";
+
+        body.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px;">
+                <div class="detail-heading">${escHtml(node.heading)}</div>
+                <button class="btn btn-secondary btn-sm" onclick="scrollToDiff()" style="flex-shrink:0;">View Changes</button>
             </div>
 
-            <div class="detail-meta-container">
-                <span class="badge ${levelColor}">Level ${node.level}</span>
-                <span class="badge blue">ID: ${node.id}</span>
-                <span class="badge blue">Version: ${currentVerId}</span>
+            <div class="meta-badges">
+                <span class="badge ${levelBadge}">Level ${node.level}</span>
+                <span class="badge badge-blue">ID: ${node.id}</span>
+                <span class="badge badge-blue">V${currentVerId}</span>
                 ${diffBadge}
             </div>
 
-            <table class="metadata-table" style="margin-bottom:14px;">
-                <tr><td>Parent Section</td><td>${parentPath}</td></tr>
-                <tr><td>Content Hash</td>
-                    <td>
-                        <span style="font-family:monospace; font-size:11px;">${node.content_hash.substring(0,16)}…</span>
-                        <button class="hash-btn" style="margin-left:8px;" onclick="navigator.clipboard.writeText('${node.content_hash}')">Copy</button>
-                    </td>
-                </tr>
-                <tr><td>Logical Node ID</td><td style="font-family:monospace; font-size:11px;">${node.logical_id.substring(0,16)}…</td></tr>
-                <tr><td>Full Path</td><td style="font-size:11px;">${node.path}</td></tr>
+            <table class="meta-table" style="margin-bottom:12px;">
+                <tr><td>Parent Section</td><td>${escHtml(parentPath)}</td></tr>
+                <tr><td>Heading Level</td><td>H${node.level}</td></tr>
+                <tr><td>Content Hash</td><td>
+                    <span style="font-family:monospace;">${node.content_hash.substring(0,16)}…</span>
+                    <button class="hash-btn" style="margin-left:6px;" onclick="copy('${node.content_hash}','Hash')">Copy</button>
+                </td></tr>
+                <tr><td>Logical Node ID</td><td style="font-family:monospace;font-size:10.5px;">${node.logical_id.substring(0,20)}…</td></tr>
             </table>
 
-            <div class="control-label" style="margin-bottom:8px;">Text Content</div>
-            <div class="section-text">${renderContentHtml(node.body_text)}</div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px;text-transform:uppercase;">Text Content</div>
+            <div class="section-body">${renderMarkdown(node.body_text)}</div>
 
-            ${diffBlock}
+            <div id="diff-anchor">${diffBlock}</div>
         `;
-        
     } catch (err) {
-        detailBody.innerHTML = `<div class="alert alert-danger"><div class="alert-title">⚠️ Error</div>${err.message}</div>`;
+        body.innerHTML = `<div style="color:var(--red);padding:16px;">${err.message}</div>`;
     }
 }
 
-// Convert markdown tables and lists into formatted HTML
-function renderContentHtml(text) {
-    if (!text) return "<em>(No text content in this section)</em>";
-    
-    // Safely encode HTML tags
-    let html = text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-        
-    // Simple table parser
+function scrollToDiff() {
+    const el = document.getElementById("diff-anchor");
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+}
+
+function copy(text, label) {
+    navigator.clipboard.writeText(text).then(() => alert(`${label} copied!`));
+}
+
+function escHtml(s) {
+    if (!s) return "";
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function colorDiff(text) {
+    if (!text) return "";
+    return text.split("\n").map(l => {
+        const s = escHtml(l);
+        if (l.startsWith("+")) return `<span class="diff-add">${s}</span>`;
+        if (l.startsWith("-")) return `<span class="diff-del">${s}</span>`;
+        if (l.startsWith("@@")) return `<span class="diff-info">${s}</span>`;
+        return `<span>${s}</span>`;
+    }).join("\n");
+}
+
+function renderMarkdown(text) {
+    if (!text) return "<em style='color:var(--text-3);'>No content in this section.</em>";
+    let html = escHtml(text);
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // Inline code
+    html = html.replace(/`(.+?)`/g, "<code style='background:var(--bg);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10.5px;'>$1</code>");
+
+    // Simple markdown table
     const lines = html.split("\n");
-    let inTable = false;
-    let tableHeaders = [];
-    let tableRows = [];
-    let outputLines = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        
+    let out = []; let inTable = false; let headers = []; let rows = [];
+
+    function flushTable() {
+        if (!headers.length) return;
+        let t = `<div style="overflow-x:auto;margin:8px 0;"><table class="tc-table" style="font-size:11px;">`;
+        t += `<thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>`;
+        t += `<tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>`;
+        t += `</table></div>`;
+        out.push(t);
+        inTable = false; headers = []; rows = [];
+    }
+
+    lines.forEach(line => {
         if (line.startsWith("|") && line.endsWith("|")) {
-            inTable = true;
-            // Split line by |
-            const cells = line.split("|").map(c => c.trim()).filter((c, idx, arr) => idx > 0 && idx < arr.length - 1);
-            
-            // Check if it's separator line (e.g. |---|---|)
-            if (cells.every(c => c.match(/^:-*-*:*$/) || c.match(/^-+$/))) {
-                // Skip separator lines
-                continue;
-            }
-            
-            if (tableHeaders.length === 0) {
-                tableHeaders = cells;
-            } else {
-                tableRows.push(cells);
-            }
+            const cells = line.split("|").slice(1,-1).map(c=>c.trim());
+            if (cells.every(c => /^[-:]+$/.test(c))) return; // separator
+            if (!inTable) { inTable = true; headers = cells; }
+            else rows.push(cells);
         } else {
-            if (inTable) {
-                // Build HTML Table
-                let tableHtml = '<div style="overflow-x:auto; margin: 16px 0;"><table class="tc-table" style="font-size:12px;">';
-                tableHtml += '<thead><tr>' + tableHeaders.map(h => `<th style="padding:8px 12px;">${h}</th>`).join("") + '</tr></thead>';
-                tableHtml += '<tbody>' + tableRows.map(row => '<tr>' + row.map(cell => `<td style="padding:8px 12px; border-bottom:1px solid var(--border);">${cell}</td>`).join("") + '</tr>').join("") + '</tbody>';
-                tableHtml += '</table></div>';
-                
-                outputLines.push(tableHtml);
-                
-                // Reset table variables
-                inTable = false;
-                tableHeaders = [];
-                tableRows = [];
-            }
-            outputLines.push(line);
+            if (inTable) flushTable();
+            out.push(line);
         }
-    }
-    
-    // Add final table if document ends during table
-    if (inTable) {
-        let tableHtml = '<div style="overflow-x:auto; margin: 16px 0;"><table class="tc-table" style="font-size:12px;">';
-        tableHtml += '<thead><tr>' + tableHeaders.map(h => `<th style="padding:8px 12px;">${h}</th>`).join("") + '</tr></thead>';
-        tableHtml += '<tbody>' + tableRows.map(row => '<tr>' + row.map(cell => `<td style="padding:8px 12px; border-bottom:1px solid var(--border);">${cell}</td>`).join("") + '</tr>').join("") + '</tbody>';
-        tableHtml += '</table></div>';
-        outputLines.push(tableHtml);
-    }
-    
-    return outputLines.join("\n");
+    });
+    if (inTable) flushTable();
+
+    return out.join("\n");
 }
 
-// Colorize unified diff formatting
-function formatDiffHtml(diffText) {
-    if (!diffText) return "";
-    
-    return diffText.split("\n").map(line => {
-        if (line.startsWith("+")) {
-            return `<div class="diff-line-add">${line}</div>`;
-        } else if (line.startsWith("-")) {
-            return `<div class="diff-line-del">${line}</div>`;
-        } else if (line.startsWith("@@")) {
-            return `<div class="diff-line-info">${line}</div>`;
-        }
-        return `<div>${line}</div>`;
-    }).join("");
-}
-
-// Fetch all selections for dropdown
-async function loadSelectionsList(selectSelId = null) {
+// ─── Selections ───────────────────────────────────────────────────────────────
+async function loadSelectionsList(selectId = null) {
     try {
-        // Query database selections
-        // Since there is no list selections endpoint in our model, we can query selections from Selection model.
-        // Wait, how do we query selections? We should create an endpoint in routes/selections.py to list all selections.
-        // Wait! Let's check: did we add a `GET /api/selections` endpoint to list selections?
-        // Ah! In `app/routes/selections.py`, we only added:
-        // `POST /api/selections`
-        // `GET /api/selections/{selection_id}`
-        // Oh! We didn't add a list selections endpoint!
-        // Wait, can we fetch selections from the database? Yes, let's write a `GET /api/selections` list endpoint in `app/routes/selections.py`!
-        // That is extremely important so that the dropdown can be loaded! Let's make sure we add it.
-        // Let's implement it. Wait, let's inspect if there is already a list selections endpoint. No, we only wrote create and read.
-        // Let's first make a list selections endpoint in selections.py. I can do it easily using the replace tool.
-        // Let's check: yes, we'll write `GET /api/selections` returning `List[SelectionResponse]`.
-        
-        // Let's fetch selections from `/api/selections`
-        const response = await fetch("/api/selections");
-        if (!response.ok) throw new Error("Failed to load selections");
-        const selections = await response.json();
-        
-        const selector = document.getElementById("selection-selector");
-        selector.innerHTML = '<option value="">-- Choose Selection --</option>';
-        
-        selections.forEach(s => {
-            const opt = document.createElement("option");
-            opt.value = s.id;
-            opt.textContent = s.name;
-            selector.appendChild(opt);
+        const r = await fetch("/api/selections");
+        if (!r.ok) throw new Error("Failed to load selections");
+        const sels = await r.json();
+
+        const sel = document.getElementById("selection-selector");
+        sel.innerHTML = '<option value="">— Choose Selection —</option>';
+        sels.forEach(s => {
+            const o = document.createElement("option");
+            o.value = s.id; o.textContent = s.name;
+            sel.appendChild(o);
         });
-        
-        document.getElementById("stat-total-selections").textContent = selections.length;
-        
-        if (selectSelId) {
-            selector.value = selectSelId;
-            loadSelectionDetails(selectSelId);
-        }
-        
-    } catch (err) {
-        console.error("Selections list error: " + err.message);
-    }
+
+        setText("stat-total-selections", sels.length);
+
+        if (selectId) { sel.value = selectId; loadSelectionDetails(selectId); }
+    } catch (err) { console.error(err); }
 }
 
-// Load details of selection and check staleness
-async function loadSelectionDetails(selectionId) {
-    if (!selectionId) {
-        document.getElementById("selection-details-pane").style.display = "none";
-        document.getElementById("selection-empty-pane").style.display = "block";
-        document.getElementById("staleness-card").style.display = "none";
-        document.getElementById("btn-generate-tc").style.display = "none";
-        document.getElementById("test-cases-body").innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 40px 20px;">Select or create a selection in the right-hand panel, then generate test cases.</div>';
+async function loadSelectionDetails(selId) {
+    const detPane   = document.getElementById("selection-details-pane");
+    const emptyPane = document.getElementById("selection-empty-pane");
+    const tcBtn     = document.getElementById("btn-generate-tc");
+    const staleness = document.getElementById("staleness-card");
+    const tcBody    = document.getElementById("test-cases-body");
+
+    if (!selId) {
+        detPane.style.display = "none";
+        emptyPane.style.display = "block";
+        staleness.style.display = "none";
+        tcBtn.style.display = "none";
+        tcBody.innerHTML = '<div class="empty-state" style="padding:32px 20px;">Select or create a selection, then generate test cases.</div>';
         return;
     }
-    
-    activeSelectionId = parseInt(selectionId);
-    
-    document.getElementById("selection-details-pane").style.display = "block";
-    document.getElementById("selection-empty-pane").style.display = "none";
-    document.getElementById("btn-generate-tc").style.display = "inline-flex";
-    
+
+    activeSelectionId = parseInt(selId);
+    detPane.style.display   = "block";
+    emptyPane.style.display = "none";
+    tcBtn.style.display     = "inline-flex";
+
     try {
-        // Fetch selection details
-        const response = await fetch(`/api/selections/${selectionId}`);
-        if (!response.ok) throw new Error("Failed to load selection");
-        const selection = await response.json();
-        
-        // Resolve pinned version label
-        const verLabelText = document.querySelector(`#ver-selector option[value="${selection.version_id}"]`)?.textContent || `v${selection.version_id}`;
-        document.getElementById("sel-pinned-ver").textContent = verLabelText.replace(" (Latest)", "");
-        document.getElementById("sel-created-on").textContent = new Date(selection.created_at).toLocaleString();
+        const r   = await fetch(`/api/selections/${selId}`);
+        if (!r.ok) throw new Error("Failed to load selection");
+        const sel = await r.json();
 
-        // Render selected node tags
-        const nodesList = document.getElementById("sel-nodes-list");
-        nodesList.innerHTML = "";
+        const verOpt = document.querySelector(`#ver-selector option[value="${sel.version_id}"]`);
+        setText("sel-pinned-ver", (verOpt?.textContent || `v${sel.version_id}`).replace(" (Latest)",""));
+        document.getElementById("sel-pinned-ver").className = "badge badge-blue";
+        document.getElementById("sel-created-on").textContent = new Date(sel.created_at).toLocaleString();
 
-        selection.nodes.forEach(n => {
-            const item = document.createElement("div");
-            item.className = "selected-section-item";
-            // Shorten path to last two segments for readability
+        const list  = document.getElementById("sel-nodes-list");
+        list.innerHTML = "";
+        setText("sel-node-count", sel.nodes.length);
+
+        sel.nodes.forEach(n => {
             const parts = n.path.split("/").filter(Boolean);
-            const shortPath = parts.slice(-2).join(" / ");
-            item.innerHTML = `
-                <span title="${n.path}">${shortPath}</span>
-                <span style="font-size:10px; color:var(--text-secondary);">#${n.id}</span>
-            `;
-            nodesList.appendChild(item);
+            const short = parts.slice(-2).join(" / ");
+            const item  = document.createElement("div");
+            item.className = "tag-item";
+            item.innerHTML = `<span class="tag-item-label" title="${escHtml(n.path)}">${escHtml(short)}</span><span style="color:var(--text-3);font-size:10px;">#${n.id}</span>`;
+            list.appendChild(item);
         });
 
-        // Load generated test cases and staleness check
-        loadTestCases(selectionId);
-
-    } catch (err) {
-        console.error(err);
-    }
+        await loadTestCases(selId);
+    } catch (err) { console.error(err); }
 }
 
-// Load test cases and display staleness cards
-async function loadTestCases(selectionId) {
-    const tcBody = document.getElementById("test-cases-body");
-    const stalenessCard = document.getElementById("staleness-card");
-    const stalenessBody = document.getElementById("staleness-body");
-    
-    tcBody.innerHTML = '<div style="text-align:center; padding: 20px;"><span class="loading-spinner"></span> Loading test cases...</div>';
-    
+// ─── Test Cases ───────────────────────────────────────────────────────────────
+async function loadTestCases(selId) {
+    const tcBody    = document.getElementById("test-cases-body");
+    const staleness = document.getElementById("staleness-card");
+
+    tcBody.innerHTML = `<div style="text-align:center;padding:24px;"><span class="spinner"></span><div style="margin-top:8px;font-size:11px;color:var(--text-2);">Loading test cases…</div></div>`;
+
     try {
-        const response = await fetch(`/api/selections/${selectionId}/test-cases`);
-        
-        if (response.status === 404) {
-            // Not generated yet
+        const r = await fetch(`/api/selections/${selId}/test-cases`);
+
+        if (r.status === 404) {
             tcBody.innerHTML = `
-                <div style="text-align: center; color: var(--text-secondary); padding: 40px 20px;">
-                    <div style="font-size:36px; margin-bottom:12px;">🤖</div>
-                    No QA test cases have been generated for this selection yet.<br><br>
-                    <button class="btn btn-primary" onclick="triggerTestGeneration()">⚡ Generate Test Cases Now</button>
-                </div>
-            `;
-            stalenessCard.style.display = "none";
+                <div class="empty-state" style="padding:40px 20px;">
+                    <div style="font-size:32px;margin-bottom:12px;">🤖</div>
+                    No test cases generated yet for this selection.<br><br>
+                    <button class="btn btn-primary btn-sm" onclick="triggerTestGeneration()">⚡ Generate Now</button>
+                </div>`;
+            staleness.style.display = "none";
             return;
         }
-        
-        if (!response.ok) throw new Error("Failed to load test cases");
-        const gen = await response.json();
-        
-        // Render test cases header info
-        const selOpt = document.querySelector(`#selection-selector option[value="${selectionId}"]`);
+
+        if (!r.ok) throw new Error("Failed to load test cases");
+        const gen = await r.json();
+
+        // Resolve selection name for meta bar
+        const selOpt = document.querySelector(`#selection-selector option[value="${selId}"]`);
         const selName = selOpt?.textContent || "Selection";
         const genTime = gen.created_at ? new Date(gen.created_at).toLocaleString() : "Unknown";
 
-        // Render test cases with two tabs: table view and raw output
-        let tcTableHtml = `
-            <div style="padding:12px 20px; background:var(--bg-main); border-bottom:1px solid var(--border); font-size:11px; color:var(--text-secondary); display:flex; gap:16px;">
-                <span><strong style="color:var(--text-primary);">Selection:</strong> ${selName}</span>
-                <span><strong style="color:var(--text-primary);">Version:</strong> v${gen.version_id || "?"}</span>
-                <span><strong style="color:var(--text-primary);">Generated:</strong> ${genTime}</span>
+        // Build tab UI
+        let html = `
+            <div class="tc-meta-bar">
+                <span><strong>Selection:</strong> ${escHtml(selName)}</span>
+                <span><strong>Version:</strong> v${gen.version_id ?? "?"}</span>
+                <span><strong>Generated:</strong> ${genTime}</span>
             </div>
-            <div class="tabs-container" style="padding:10px 20px 0; margin-bottom:0;">
-                <button class="tab-btn active" id="tab-btn-table" onclick="showTcTab('tc-table')">Test Cases (${gen.test_cases.length})</button>
-                <button class="tab-btn" id="tab-btn-raw" onclick="showTcTab('tc-raw')">Raw LLM Output</button>
+            <div class="tabs-bar">
+                <button class="tab-btn active" id="tab-tc"  onclick="switchTcTab('tc')">Test Cases (${gen.test_cases.length})</button>
+                <button class="tab-btn"         id="tab-raw" onclick="switchTcTab('raw')">Raw LLM Output</button>
             </div>
 
-            <div id="tc-table" style="padding:12px 20px;">
+            <div class="tab-panel active" id="panel-tc">
                 <table class="tc-table">
                     <thead>
                         <tr>
                             <th style="width:28px;">#</th>
                             <th>Title</th>
-                            <th style="width:80px;">Priority</th>
-                            <th style="width:70px;">Status</th>
+                            <th style="width:76px;">Priority</th>
+                            <th style="width:62px;">Status</th>
                         </tr>
                     </thead>
-                    <tbody id="tc-tbody">
-        `;
+                    <tbody>`;
 
-        gen.test_cases.forEach((tc, idx) => {
-            const pColor = tc.priority === "High" ? "red" : tc.priority === "Medium" ? "orange" : "blue";
-            const rowId = `tc-row-${idx}`;
-            const detailId = `tc-detail-${idx}`;
-            tcTableHtml += `
-                <tr class="tc-row-header" onclick="toggleTcRow('${detailId}', '${rowId}')">
-                    <td>${idx + 1}</td>
-                    <td style="font-weight:600;">${tc.title}</td>
-                    <td><span class="badge ${pColor}">${tc.priority}</span></td>
-                    <td><span class="badge green">Valid</span></td>
+        gen.test_cases.forEach((tc, i) => {
+            const pc = tc.priority === "High" ? "badge-red" : tc.priority === "Medium" ? "badge-orange" : "badge-blue";
+            html += `
+                <tr class="tc-row" onclick="toggleRow('tr-detail-${i}')">
+                    <td>${i+1}</td>
+                    <td style="font-weight:600;">${escHtml(tc.title)}</td>
+                    <td><span class="badge ${pc}">${escHtml(tc.priority)}</span></td>
+                    <td><span class="badge badge-green">Valid</span></td>
                 </tr>
-                <tr class="tc-row-details" id="${detailId}">
-                    <td colspan="4">
-                        <div class="tc-details-content">
-                            <div style="margin-bottom:8px; font-weight:600; font-size:11px; text-transform:uppercase; color:var(--text-secondary);">Steps</div>
-                            <ol style="margin-left:18px; margin-bottom:12px;">
-                                ${tc.steps.map(s => `<li style="margin-bottom:4px;">${s}</li>`).join("")}
-                            </ol>
-                            <div style="margin-bottom:6px; font-weight:600; font-size:11px; text-transform:uppercase; color:var(--text-secondary);">Expected Result</div>
-                            <div style="color:var(--text-primary);">${tc.expected_result}</div>
-                        </div>
+                <tr class="tc-detail-row" id="tr-detail-${i}">
+                    <td colspan="4" class="tc-detail-cell">
+                        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--text-2);margin-bottom:6px;">Steps</div>
+                        <ol style="margin-left:18px;margin-bottom:12px;">
+                            ${tc.steps.map(s => `<li style="margin-bottom:4px;">${escHtml(s)}</li>`).join("")}
+                        </ol>
+                        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--text-2);margin-bottom:5px;">Expected Result</div>
+                        <div>${escHtml(tc.expected_result)}</div>
                     </td>
-                </tr>
-            `;
+                </tr>`;
         });
 
-        tcTableHtml += `
-                    </tbody>
-                </table>
-            </div>
+        html += `</tbody></table></div>`;
 
-            <div id="tc-raw" style="display:none; padding:12px 20px;">
-                <pre style="background:var(--bg-main); border:1px solid var(--border); border-radius:var(--radius); padding:14px; font-size:11px; overflow:auto; max-height:300px; white-space:pre-wrap;">${JSON.stringify(gen.test_cases, null, 2)}</pre>
-            </div>
-        `;
+        // Raw LLM output tab
+        const rawContent = gen.raw_response || JSON.stringify(gen.test_cases, null, 2);
+        html += `
+            <div class="tab-panel" id="panel-raw">
+                <div class="raw-output-container">
+                    <pre class="raw-output">${escHtml(rawContent)}</pre>
+                </div>
+            </div>`;
 
-        tcBody.innerHTML = tcTableHtml;
-        
-        // Show staleness card if test cases are stale
-        if (gen.is_stale) {
-            stalenessCard.style.display = "block";
+        tcBody.innerHTML = html;
 
-            const changedCount = gen.impacted_nodes.filter(n => n.status === "modified").length;
-            const deletedCount = gen.impacted_nodes.filter(n => n.status === "deleted").length;
-            const totalInSel = (gen.impacted_nodes.length || 0);
-            const unchangedCount = Math.max(0, (gen.test_cases?.length || 0) - changedCount - deletedCount);
-            const overallStatus = (changedCount + deletedCount) > 0 ? "STALE" : "CURRENT";
+        // ── Staleness Card ──────────────────────────────────────────────────
+        if (gen.is_stale && gen.impacted_nodes?.length) {
+            staleness.style.display = "block";
+            const changed = gen.impacted_nodes.filter(n => n.status === "modified").length;
+            const deleted = gen.impacted_nodes.filter(n => n.status === "deleted").length;
+            const total   = gen.impacted_nodes.length;
+            const unchanged = Math.max(0, total - changed - deleted);
 
-            let changedSectionsHtml = gen.impacted_nodes.map(node => {
-                const badgeColor = node.status === "modified" ? "yellow" : "red";
-                const shortPath = node.path.split("/").filter(Boolean).slice(-2).join(" / ");
+            let changedRows = gen.impacted_nodes.map(n => {
+                const bc    = n.status === "modified" ? "badge-orange" : "badge-red";
+                const parts = n.path.split("/").filter(Boolean);
+                const short = parts.slice(-2).join(" / ");
                 return `
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px;">
-                        <span>• ${shortPath}</span>
-                        <span class="badge ${badgeColor}">${node.status.toUpperCase()}</span>
-                    </div>
-                `;
+                    <div class="changed-section-row">
+                        <span class="changed-section-label">• ${escHtml(short)}</span>
+                        <span class="badge ${bc}">${n.status === "modified" ? "CHANGED" : "DELETED"}</span>
+                    </div>`;
             }).join("");
 
-            stalenessBody.innerHTML = `
-                <div class="alert alert-danger">
-                    <div class="alert-title">⚠️ ${changedCount + deletedCount} of ${totalInSel} sections changed since test cases were generated</div>
+            document.getElementById("staleness-body").innerHTML = `
+                <div class="stale-banner">
+                    <div class="stale-banner-title">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        ${changed + deleted} of ${total} sections have changed since this test set was generated.
+                    </div>
+                    <div class="stale-banner-subtitle">This test set may be <strong>STALE</strong>.</div>
                 </div>
 
-                <div class="control-label" style="margin-bottom:8px;">Impact Summary</div>
-                <table class="metadata-table" style="margin-bottom:14px;">
-                    <tr>
-                        <td>Total Sections in Selection</td>
-                        <td>${totalInSel}</td>
-                    </tr>
-                    <tr>
-                        <td>Changed</td>
-                        <td><span style="color:var(--warning); font-weight:600;">${changedCount}</span></td>
-                    </tr>
-                    <tr>
-                        <td>Deleted</td>
-                        <td><span style="color:var(--error); font-weight:600;">${deletedCount}</span></td>
-                    </tr>
-                    <tr>
-                        <td>Unchanged</td>
-                        <td><span style="color:var(--success); font-weight:600;">${unchangedCount}</span></td>
-                    </tr>
-                    <tr>
-                        <td>Overall Status</td>
-                        <td><span class="badge ${overallStatus === 'STALE' ? 'red' : 'green'}">${overallStatus}</span></td>
-                    </tr>
+                <div style="font-size:11px;font-weight:700;margin-bottom:8px;">Impact Summary</div>
+                <table class="meta-table" style="margin-bottom:14px;">
+                    <tr><td>Total Sections in Selection</td><td>${total}</td></tr>
+                    <tr><td>Changed Sections</td><td style="color:var(--orange);font-weight:700;">${changed}</td></tr>
+                    <tr><td>Unchanged Sections</td><td style="color:var(--green);font-weight:700;">${unchanged}</td></tr>
+                    <tr><td>Overall Status</td><td><span class="badge badge-red">STALE</span></td></tr>
                 </table>
 
-                <div class="control-label" style="margin-bottom:8px;">Changed Sections</div>
-                ${changedSectionsHtml}
+                <div style="font-size:11px;font-weight:700;margin-bottom:8px;">Changed Sections</div>
+                <div>${changedRows}</div>
 
-                <button class="btn btn-secondary" style="margin-top:14px; width:100%; justify-content:center;" onclick="viewDetailedDiffs(${selectionId})">View Detailed Diff →</button>
+                <button class="btn btn-secondary btn-sm" style="margin-top:14px;width:100%;justify-content:center;" onclick="expandDiffs(${selId})">
+                    View Detailed Diff →
+                </button>
             `;
         } else {
-            stalenessCard.style.display = "none";
+            staleness.style.display = "none";
         }
-        
+
     } catch (err) {
-        tcBody.innerHTML = `<div class="alert alert-danger"><div class="alert-title">⚠️ Error</div>${err.message}</div>`;
+        tcBody.innerHTML = `<div style="color:var(--red);padding:16px;">${err.message}</div>`;
     }
 }
 
-// Trigger generation via Gemini
+function switchTcTab(which) {
+    ["tc","raw"].forEach(id => {
+        document.getElementById(`tab-${id}`)?.classList.toggle("active", id === which);
+        document.getElementById(`panel-${id}`)?.classList.toggle("active", id === which);
+    });
+}
+
+function toggleRow(id) {
+    document.getElementById(id)?.classList.toggle("open");
+}
+
+// ─── Expand Diffs ─────────────────────────────────────────────────────────────
+async function expandDiffs(selId) {
+    try {
+        const r = await fetch(`/api/selections/${selId}/test-cases`);
+        if (!r.ok) return;
+        const gen = await r.json();
+        const body = document.getElementById("staleness-body");
+        const existing = body.querySelector("#diff-detail-section");
+        if (existing) { existing.remove(); return; } // toggle off
+
+        let html = `<div id="diff-detail-section" style="margin-top:14px;">
+            <div style="font-size:11px;font-weight:700;margin-bottom:8px;">Detailed Diffs</div>`;
+
+        gen.impacted_nodes.forEach(n => {
+            const parts = n.path.split("/").filter(Boolean);
+            const short = parts.slice(-2).join(" / ");
+            const bc    = n.status === "modified" ? "badge-orange" : "badge-red";
+            html += `
+                <div style="margin-bottom:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <strong style="font-size:12px;">${escHtml(short)}</strong>
+                        <span class="badge ${bc}">${n.status.toUpperCase()}</span>
+                    </div>
+                    <div class="diff-view">${colorDiff(n.diff)}</div>
+                </div>`;
+        });
+
+        html += `</div>`;
+        body.insertAdjacentHTML("beforeend", html);
+    } catch (err) { console.error(err); }
+}
+
+// ─── Generate Test Cases ──────────────────────────────────────────────────────
 async function triggerTestGeneration() {
     if (!activeSelectionId) return;
-    
-    const tcBody = document.getElementById("test-cases-body");
-    tcBody.innerHTML = `
-        <div style="text-align:center; padding: 40px 20px;">
-            <span class="loading-spinner"></span>
-            <div style="margin-top:12px; font-weight:600;">Contacting Google Gemini 2.5 Flash...</div>
-            <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">Generating structured QA test cases. This may take up to 10 seconds.</div>
-        </div>
-    `;
-    
+
+    document.getElementById("test-cases-body").innerHTML = `
+        <div style="text-align:center;padding:40px 20px;">
+            <span class="spinner"></span>
+            <div style="margin-top:12px;font-weight:600;">Contacting Gemini…</div>
+            <div style="font-size:11px;color:var(--text-2);margin-top:4px;">Generating structured QA test cases. This may take ~10 seconds.</div>
+        </div>`;
+
     try {
-        const response = await fetch(`/api/selections/${activeSelectionId}/generate`, {
-            method: "POST"
-        });
-        
-        if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.detail || "Generation failed");
-        }
-        
-        alert("QA test cases generated successfully!");
-        loadTestCases(activeSelectionId);
-        
+        const r = await fetch(`/api/selections/${activeSelectionId}/generate`, { method: "POST" });
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || "Generation failed"); }
+        await loadTestCases(activeSelectionId);
+        await loadTotalGenerations();
     } catch (err) {
-        alert("LLM Generation Error: " + err.message);
+        alert("LLM Error: " + err.message);
         loadTestCases(activeSelectionId);
     }
 }
 
-// Submit Named Selection Creation
+// ─── Create Selection ─────────────────────────────────────────────────────────
 async function submitCreateSelection() {
     const name = document.getElementById("new-selection-name").value.trim();
-    if (!name) {
-        alert("Please enter a selection name!");
-        return;
-    }
-    
-    // Gather checked nodes from DOM checkboxes
-    const checkedBoxes = document.querySelectorAll(".tree-node-checkbox:checked");
-    const nodeIds = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
-    
+    if (!name) { alert("Please enter a selection name."); return; }
+
+    const checked  = document.querySelectorAll(".tree-node-checkbox:checked");
+    const nodeIds  = Array.from(checked).map(cb => parseInt(cb.value));
+
     try {
-        const response = await fetch("/api/selections", {
-            method: "POST",
+        const r = await fetch("/api/selections", {
+            method:  "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                name: name,
-                node_ids: nodeIds
-            })
+            body:    JSON.stringify({ name, node_ids: nodeIds })
         });
-        
-        if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.detail || "Failed to create selection");
-        }
-        
-        const selection = await response.json();
-        alert(`Selection "${name}" created successfully!`);
-        
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail || "Failed to create"); }
+        const sel = await r.json();
         closeCreateSelectionModal();
-        
-        // Clear all checkboxes
         document.querySelectorAll(".tree-node-checkbox").forEach(cb => cb.checked = false);
         selectedNodeIds.clear();
-        
-        // Reload selections dropdown and auto-select this new one
-        await loadSelectionsList(selection.id);
-        
+        await loadSelectionsList(sel.id);
     } catch (err) {
-        alert("Selection Error: " + err.message);
+        alert("Error: " + err.message);
     }
 }
 
-// Filter tree sections by query matching
+// ─── Search ───────────────────────────────────────────────────────────────────
 function handleSearch(query) {
     const term = query.toLowerCase().trim();
-    const treeRoot = document.getElementById("tree-root");
-    
+
     if (!term) {
-        // Show everything and collapse except top
-        document.querySelectorAll(".tree-node").forEach(node => {
-            node.style.display = "block";
-        });
+        document.querySelectorAll(".tree-node").forEach(n => n.style.display = "");
         return;
     }
-    
-    // Scan all items in the nodesMap
+
     nodesMap.forEach(node => {
-        const header = document.getElementById(`node-header-${node.id}`);
-        const container = document.getElementById(`node-container-${node.id}`);
-        
-        if (header && container) {
-            const textMatch = node.title.toLowerCase().includes(term) || node.body_text.toLowerCase().includes(term);
-            if (textMatch) {
-                container.style.display = "block";
-                // Show all parents
-                let parentId = node.parent_id;
-                while (parentId) {
-                    const parentContainer = document.getElementById(`node-container-${parentId}`);
-                    const parentChildren = document.getElementById(`node-children-${parentId}`);
-                    const parentArrow = document.getElementById(`node-header-${parentId}`)?.querySelector(".tree-node-arrow");
-                    
-                    if (parentContainer) parentContainer.style.display = "block";
-                    if (parentChildren) parentChildren.classList.add("expanded");
-                    if (parentArrow) parentArrow.classList.add("expanded");
-                    
-                    const parentNode = nodesMap.get(parentId);
-                    parentId = parentNode ? parentNode.parent_id : null;
-                }
-            } else {
-                container.style.display = "none";
+        const el = document.getElementById(`tc-${node.id}`);
+        if (!el) return;
+        const match = node.title.toLowerCase().includes(term) || (node.body_text || "").toLowerCase().includes(term);
+        el.style.display = match ? "" : "none";
+
+        if (match) {
+            // Expand all ancestors
+            let pid = node.parent_id;
+            while (pid) {
+                const pe = document.getElementById(`tc-${pid}`);
+                const pk = document.getElementById(`tk-${pid}`);
+                const pa = document.getElementById(`th-${pid}`)?.querySelector(".tree-node-arrow");
+                if (pe) pe.style.display = "";
+                if (pk) pk.classList.add("expanded");
+                if (pa) pa.classList.add("expanded");
+                pid = nodesMap.get(pid)?.parent_id || null;
             }
         }
     });
-}
-
-// Toggle test case row expansion
-function toggleTcRow(detailId, rowId) {
-    const detail = document.getElementById(detailId);
-    if (!detail) return;
-    detail.classList.toggle("expanded");
-}
-
-// Switch between test case table and raw LLM output tabs
-function showTcTab(tabId) {
-    ["tc-table", "tc-raw"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = id === tabId ? "block" : "none";
-    });
-    // Update tab button highlights
-    const tableBtn = document.getElementById("tab-btn-table");
-    const rawBtn = document.getElementById("tab-btn-raw");
-    if (tableBtn) tableBtn.classList.toggle("active", tabId === "tc-table");
-    if (rawBtn) rawBtn.classList.toggle("active", tabId === "tc-raw");
-}
-
-// View detailed diffs for a selection (expands staleness card diff view)
-async function viewDetailedDiffs(selectionId) {
-    const stalenessBody = document.getElementById("staleness-body");
-    if (!stalenessBody) return;
-
-    try {
-        const response = await fetch(`/api/selections/${selectionId}/test-cases`);
-        if (!response.ok) return;
-        const gen = await response.json();
-
-        let diffHtml = "<div style='margin-top:16px;'>";
-        gen.impacted_nodes.forEach(node => {
-            const badgeColor = node.status === "modified" ? "yellow" : "red";
-            const shortPath = node.path.split("/").filter(Boolean).slice(-2).join(" / ");
-            diffHtml += `
-                <div style="margin-bottom:16px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <strong style="font-size:12px;">${shortPath}</strong>
-                        <span class="badge ${badgeColor}">${node.status.toUpperCase()}</span>
-                    </div>
-                    <div class="diff-view">${formatDiffHtml(node.diff)}</div>
-                </div>
-            `;
-        });
-        diffHtml += "</div>";
-
-        // Append to staleness body after the table
-        const existingDiff = stalenessBody.querySelector("#diff-detail-block");
-        if (existingDiff) {
-            existingDiff.remove();
-        }
-        const diffBlock = document.createElement("div");
-        diffBlock.id = "diff-detail-block";
-        diffBlock.innerHTML = `<div class="control-label" style="margin-bottom:8px; margin-top:8px;">Detailed Diffs</div>${diffHtml}`;
-        stalenessBody.appendChild(diffBlock);
-
-    } catch (err) {
-        console.error(err);
-    }
 }

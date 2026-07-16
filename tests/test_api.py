@@ -138,3 +138,49 @@ Body text for safety alarms version 2. Content modified!
     node_test_cases = response.json()
     assert len(node_test_cases) == 1
     assert node_test_cases[0]["is_stale"] is True
+
+def test_mismatch_warning_and_force_ingest():
+    # 1. Ingest V1
+    v1_markdown = "# CardioTrack CT-200\n## 1. Overview\nOverview text."
+    response = client.post(
+        "/api/documents/ingest",
+        json={
+            "document_name": "CardioTrack CT-200",
+            "version_label": "v1",
+            "markdown_content": v1_markdown,
+            "is_new_document": True
+        }
+    )
+    assert response.status_code == 201
+    
+    # 2. Ingest completely different V2 (mismatch exceeds 70%)
+    different_v2_markdown = "# CardioTrack CT-200\n## 9. Totally Unrelated Heading\nUnrelated text."
+    response = client.post(
+        "/api/documents/ingest",
+        json={
+            "document_name": "CardioTrack CT-200",
+            "version_label": "v2",
+            "markdown_content": different_v2_markdown,
+            "is_new_document": False
+        }
+    )
+    assert response.status_code == 201
+    res_data = response.json()
+    assert res_data["status"] == "warning"
+    assert res_data["mismatch_percent"] == 100.0
+    
+    # 3. Force Ingest V2 (should succeed)
+    response = client.post(
+        "/api/documents/ingest",
+        json={
+            "document_name": "CardioTrack CT-200",
+            "version_label": "v2",
+            "markdown_content": different_v2_markdown,
+            "is_new_document": False,
+            "force": True
+        }
+    )
+    assert response.status_code == 201
+    res_data = response.json()
+    assert res_data["status"] == "success"
+    assert res_data["stats"]["total_nodes"] == 2
