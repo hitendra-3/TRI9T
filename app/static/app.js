@@ -1102,12 +1102,14 @@ async function loadTestCases(selId) {
 
         gen.test_cases.forEach((tc, i) => {
             const pc = tc.priority === "High" ? "badge-red" : tc.priority === "Medium" ? "badge-orange" : "badge-blue";
+            const statusClass = gen.is_stale ? "badge-red" : "badge-green";
+            const statusText = gen.is_stale ? "Stale" : "Valid";
             html += `
                 <tr class="tc-row" onclick="toggleRow('tr-detail-${i}')">
                     <td>${i+1}</td>
                     <td style="font-weight:600;">${escHtml(tc.title)}</td>
                     <td><span class="badge ${pc}">${escHtml(tc.priority)}</span></td>
-                    <td><span class="badge badge-green">Valid</span></td>
+                    <td><span class="badge ${statusClass}">${statusText}</span></td>
                 </tr>
                 <tr class="tc-detail-row" id="tr-detail-${i}">
                     <td colspan="4" class="tc-detail-cell">
